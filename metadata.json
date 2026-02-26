@@ -1,0 +1,5 @@
+{
+  "name": "SonoPrompt AI",
+  "description": "Analyze songs from audio files or links to generate detailed prompts for AI music creation.",
+  "requestFramePermissions": []
+}
