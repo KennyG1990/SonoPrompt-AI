@@ -6,12 +6,12 @@ async function test() {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
+        'User-Agent': 'Mozilla/5.0'
       },
       body: 'url=https%3A%2F%2Fwww.youtube.com%2Fwatch%3Fv%3DjNQXAC9IVRw&q_auto=1&ajax=1'
     });
-    const text = await res.text();
-    console.log(res.status, text.substring(0, 500));
+    const data = await res.json();
+    console.log(data);
   } catch (e) {
     console.error(e);
   }

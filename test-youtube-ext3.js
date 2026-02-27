@@ -2,9 +2,7 @@ import yt from 'youtube-ext';
 
 async function test() {
   try {
-    const info = await yt.videoInfo('https://www.youtube.com/watch?v=jNQXAC9IVRw');
-    console.log(info.title);
-    const formats = info.formats || info.adaptiveFormats || [];
+    const formats = await yt.getFormats('https://www.youtube.com/watch?v=jNQXAC9IVRw');
     console.log(formats.length);
     const audioFormats = formats.filter(f => f.mimeType && f.mimeType.includes('audio'));
     console.log(audioFormats.length);

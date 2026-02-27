@@ -191,6 +191,73 @@ Return the result as a JSON array of segments, where each segment has a "label" 
   }
 }
 
+export async function analyzeAndGenerateStudioTrack(song: SongInput): Promise<{ title: string, prompt: string, styleTags: string, lyrics: string, analysis: string }> {
+  const parts: any[] = [];
+  
+  let promptText = `You are an expert musicologist, songwriter, and AI music prompt engineer.
+Analyze the provided reference song to understand its structure, rhythm, mood, genre, and specifically the VOCAL STYLE (timbre, delivery, emotion).
+
+CRITICAL INSTRUCTION: If a URL (like a YouTube or Spotify link) is provided as the Reference Song, you MUST use the urlContext tool to read the page and identify the ACTUAL song title and artist. DO NOT guess or hallucinate the song based on the URL string alone. Once you have the correct song title and artist, use Google Search to find accurate information about its structure and lyrics.
+
+Based on your analysis, you must generate the following for a NEW song:
+
+1. "analysis": A detailed paragraph analyzing the original song, specifically highlighting the vocal description and how it drives the emotion.
+2. "lyrics": Write original lyrics formatted with section headers (e.g., [Verse 1], [Chorus]) that match the structural style of the reference song. The THEME and EMOTION of these new lyrics MUST be based entirely on the vocal description you just analyzed.
+3. "title": A catchy, fitting title for the new song based on the lyrics.
+4. "prompt": A Song Description describing the musical DNA, mood, and vocal style (for an AI music generator).
+5. "styleTags": Comma-separated genres and vibes (e.g., "synthwave, 80s, dark"). MUST ONLY CONTAIN ALPHANUMERIC CHARACTERS AND SPACES. NO SPECIAL CHARACTERS LIKE & OR -.
+
+Return the result STRICTLY as a JSON object with the keys: "title", "prompt", "styleTags", "lyrics", and "analysis".`;
+
+  if (song.type === 'link') {
+    promptText = `Reference Song: "${song.link}"\n\n` + promptText;
+  } else {
+    const base64Data = await getFileBase64(song.file);
+    parts.push({
+      inlineData: {
+        mimeType: song.file.type,
+        data: base64Data,
+      },
+    });
+  }
+
+  parts.push({ text: promptText });
+
+  const response = await ai.models.generateContent({
+    model: "gemini-3-flash-preview",
+    contents: { parts },
+    config: {
+      tools: [{ googleSearch: {} }, { urlContext: {} }],
+    },
+  });
+
+  try {
+    let jsonStr = response.text || "{}";
+    const jsonMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+    if (jsonMatch) {
+      jsonStr = jsonMatch[1];
+    }
+    const data = JSON.parse(jsonStr);
+    
+    // Ensure lyrics are a string
+    let lyricsStr = data.lyrics;
+    if (Array.isArray(data.lyrics)) {
+      lyricsStr = data.lyrics.map((l: any) => `[${l.label}]\n${l.text}`).join('\n\n');
+    }
+
+    return {
+      title: data.title || 'Untitled',
+      prompt: data.prompt || '',
+      styleTags: data.styleTags || '',
+      lyrics: lyricsStr || '',
+      analysis: data.analysis || ''
+    };
+  } catch (e) {
+    console.error("Failed to parse generation JSON", e);
+    throw new Error("Failed to generate track details from analysis.");
+  }
+}
+
 export async function rewriteLyricSegment(
   song: SongInput, 
   fullLyrics: LyricSegment[], 

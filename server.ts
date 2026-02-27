@@ -115,6 +115,83 @@ async function startServer() {
     }
   });
 
+  app.post('/api/sonauto/generate', async (req, res) => {
+    try {
+      const { prompt, lyrics, tags } = req.body;
+      const apiKey = process.env.SONAUTO_API_KEY;
+      
+      if (!apiKey) {
+        return res.status(400).json({ error: 'SONAUTO_API_KEY is not configured in environment variables.' });
+      }
+
+      let parsedTags: string[] = [];
+      if (tags) {
+        if (tags.includes(',')) {
+          parsedTags = tags.split(',');
+        } else {
+          parsedTags = tags.split(/\s+/);
+        }
+        parsedTags = parsedTags
+          .map((t: string) => t.trim().replace(/[^a-zA-Z0-9 ]/g, ''))
+          .filter((t: string) => t.length > 0 && t.length <= 20)
+          .slice(0, 5);
+      }
+
+      const response = await fetch('https://api.sonauto.ai/v1/generations/v3', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`
+        },
+        body: JSON.stringify({
+          prompt: prompt || '',
+          lyrics: lyrics || '',
+          tags: parsedTags,
+          output_format: 'mp3'
+        })
+      });
+
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(`Sonauto API error: ${text}`);
+      }
+
+      const data = await response.json();
+      res.json(data);
+    } catch (error: any) {
+      console.error('Sonauto generation error:', error);
+      res.status(500).json({ error: error.message || 'Failed to generate song' });
+    }
+  });
+
+  app.get('/api/sonauto/status/:taskId', async (req, res) => {
+    try {
+      const { taskId } = req.params;
+      const apiKey = process.env.SONAUTO_API_KEY;
+      
+      if (!apiKey) {
+        return res.status(400).json({ error: 'SONAUTO_API_KEY is not configured.' });
+      }
+
+      const response = await fetch(`https://api.sonauto.ai/v1/generations/status/${taskId}`, {
+        headers: {
+          'Authorization': `Bearer ${apiKey}`
+        }
+      });
+
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(`Sonauto API error: ${text}`);
+      }
+
+      const data = await response.json();
+      res.json(data);
+    } catch (error: any) {
+      console.error('Sonauto status error:', error);
+      res.status(500).json({ error: error.message || 'Failed to check status' });
+    }
+  });
+
   // Vite middleware for development
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
