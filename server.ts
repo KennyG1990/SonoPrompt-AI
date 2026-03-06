@@ -137,6 +137,12 @@ async function startServer() {
           .slice(0, 5);
       }
 
+      // Sonauto has a strict whitelist for tags. To avoid validation errors,
+      // we append the style tags to the prompt and send an empty tags array.
+      const finalPrompt = parsedTags.length > 0 
+        ? `${prompt || ''}\n\nStyle: ${parsedTags.join(', ')}`
+        : (prompt || '');
+
       const response = await fetch('https://api.sonauto.ai/v1/generations/v3', {
         method: 'POST',
         headers: {
@@ -144,9 +150,8 @@ async function startServer() {
           'Authorization': `Bearer ${apiKey}`
         },
         body: JSON.stringify({
-          prompt: prompt || '',
+          prompt: finalPrompt.trim(),
           lyrics: lyrics || '',
-          tags: parsedTags,
           output_format: 'mp3'
         })
       });

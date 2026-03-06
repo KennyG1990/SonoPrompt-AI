@@ -112,7 +112,11 @@ export default function Studio() {
       const data = await res.json();
       if (data.error) throw new Error(data.error);
       
-      const taskId = data.taskId;
+      const taskId = data.task_id || data.taskId || (Array.isArray(data) && data[0]?.id) || data.id;
+      
+      if (!taskId) {
+        throw new Error('No task ID returned from Sonauto API');
+      }
       
       // Poll for status
       const pollInterval = setInterval(async () => {

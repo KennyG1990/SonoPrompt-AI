@@ -7,23 +7,14 @@ import { analyzeAudioFile, analyzeSongLink, compareSongs, generateLyrics, rewrit
 import Studio from './components/Studio';
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'upload' | 'link' | 'compare' | 'lyrics' | 'studio' | 'youtube'>('upload');
-  const [file, setFile] = useState<File | null>(null);
-  const [link, setLink] = useState('');
+  const [activeTab, setActiveTab] = useState<'analyze' | 'compare' | 'studio' | 'youtube'>('analyze');
   
-  // Compare state
-  const [compareSong1, setCompareSong1] = useState<SongInput | null>(null);
-  const [compareSong2, setCompareSong2] = useState<SongInput | null>(null);
-  const [compareInputType1, setCompareInputType1] = useState<'upload' | 'link'>('link');
-  const [compareInputType2, setCompareInputType2] = useState<'upload' | 'link'>('link');
-  const [compareLink1, setCompareLink1] = useState('');
-  const [compareLink2, setCompareLink2] = useState('');
-
-  // Lyrics state
-  const [lyricsSong, setLyricsSong] = useState<SongInput | null>(null);
-  const [lyricsInputType, setLyricsInputType] = useState<'upload' | 'link'>('link');
-  const [lyricsLink, setLyricsLink] = useState('');
+  // Analyze & Lyrics state
+  const [analyzeSong, setAnalyzeSong] = useState<SongInput | null>(null);
+  const [analyzeInputType, setAnalyzeInputType] = useState<'upload' | 'link'>('link');
+  const [analyzeLink, setAnalyzeLink] = useState('');
   const [lyricsTheme, setLyricsTheme] = useState('');
+  const [currentAction, setCurrentAction] = useState<'analyze' | 'lyrics' | 'compare' | null>(null);
   const [generatedLyrics, setGeneratedLyrics] = useState<LyricSegment[] | null>(null);
   const [songTitle, setSongTitle] = useState<string | null>(null);
   const [editingSegmentIndex, setEditingSegmentIndex] = useState<number | null>(null);
@@ -31,6 +22,14 @@ export default function App() {
   const [rewritingSegmentIndex, setRewritingSegmentIndex] = useState<number | null>(null);
   const [rewriteInstruction, setRewriteInstruction] = useState('');
   const [isGeneratingTitle, setIsGeneratingTitle] = useState(false);
+
+  // Compare state
+  const [compareSong1, setCompareSong1] = useState<SongInput | null>(null);
+  const [compareSong2, setCompareSong2] = useState<SongInput | null>(null);
+  const [compareInputType1, setCompareInputType1] = useState<'upload' | 'link'>('link');
+  const [compareInputType2, setCompareInputType2] = useState<'upload' | 'link'>('link');
+  const [compareLink1, setCompareLink1] = useState('');
+  const [compareLink2, setCompareLink2] = useState('');
 
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [result, setResult] = useState<string | null>(null);
@@ -42,9 +41,9 @@ export default function App() {
   const [isFetchingYt, setIsFetchingYt] = useState(false);
   const [isDownloadingYt, setIsDownloadingYt] = useState(false);
 
-  const onDropMain = useCallback((acceptedFiles: File[]) => {
+  const onDropAnalyze = useCallback((acceptedFiles: File[]) => {
     if (acceptedFiles.length > 0) {
-      setFile(acceptedFiles[0]);
+      setAnalyzeSong({ type: 'file', file: acceptedFiles[0] });
       setError(null);
     }
   }, []);
@@ -63,13 +62,6 @@ export default function App() {
     }
   }, []);
 
-  const onDropLyrics = useCallback((acceptedFiles: File[]) => {
-    if (acceptedFiles.length > 0) {
-      setLyricsSong({ type: 'file', file: acceptedFiles[0] });
-      setError(null);
-    }
-  }, []);
-
   const dropzoneConfig = {
     accept: {
       'audio/*': ['.mp3', '.wav', '.ogg', '.m4a', '.flac'],
@@ -79,8 +71,8 @@ export default function App() {
     maxSize: 15 * 1024 * 1024, // 15MB limit for inlineData
   };
 
-  const { getRootProps: getRootPropsMain, getInputProps: getInputPropsMain, isDragActive: isDragActiveMain } = useDropzone({
-    onDrop: onDropMain,
+  const { getRootProps: getRootPropsAnalyze, getInputProps: getInputPropsAnalyze, isDragActive: isDragActiveAnalyze } = useDropzone({
+    onDrop: onDropAnalyze,
     ...dropzoneConfig
   });
 
@@ -94,26 +86,33 @@ export default function App() {
     ...dropzoneConfig
   });
 
-  const { getRootProps: getRootPropsLyrics, getInputProps: getInputPropsLyrics, isDragActive: isDragActiveLyrics } = useDropzone({
-    onDrop: onDropLyrics,
-    ...dropzoneConfig
-  });
-
-  const handleAnalyze = async () => {
+  const handleAnalyzeAction = async (action: 'analyze' | 'lyrics' | 'compare') => {
     setError(null);
     setResult(null);
     setGeneratedLyrics(null);
     setSongTitle(null);
     setIsAnalyzing(true);
+    setCurrentAction(action);
 
     try {
-      if (activeTab === 'upload' && file) {
-        const analysis = await analyzeAudioFile(file);
-        setResult(analysis);
-      } else if (activeTab === 'link' && link.trim()) {
-        const analysis = await analyzeSongLink(link.trim());
-        setResult(analysis);
-      } else if (activeTab === 'compare') {
+      if (action === 'analyze') {
+        let s: SongInput | null = analyzeSong;
+        if (analyzeInputType === 'link' && analyzeLink.trim()) {
+          s = { type: 'link', link: analyzeLink.trim() };
+        }
+        
+        if (s) {
+          if (s.type === 'file') {
+            const analysis = await analyzeAudioFile(s.file);
+            setResult(analysis);
+          } else {
+            const analysis = await analyzeSongLink(s.link);
+            setResult(analysis);
+          }
+        } else {
+          setError('Please provide a song to analyze.');
+        }
+      } else if (action === 'compare') {
         let s1: SongInput | null = compareSong1;
         let s2: SongInput | null = compareSong2;
 
@@ -130,10 +129,10 @@ export default function App() {
         } else {
            setError('Please provide both songs to compare.');
         }
-      } else if (activeTab === 'lyrics') {
-        let s: SongInput | null = lyricsSong;
-        if (lyricsInputType === 'link' && lyricsLink.trim()) {
-          s = { type: 'link', link: lyricsLink.trim() };
+      } else if (action === 'lyrics') {
+        let s: SongInput | null = analyzeSong;
+        if (analyzeInputType === 'link' && analyzeLink.trim()) {
+          s = { type: 'link', link: analyzeLink.trim() };
         }
 
         if (s && lyricsTheme.trim()) {
@@ -153,26 +152,23 @@ export default function App() {
         } else {
           setError('Please provide a song and a theme/mood.');
         }
-      } else {
-        setError('Please provide the required inputs to analyze.');
       }
     } catch (err: any) {
       console.error(err);
-      setError(err.message || 'An error occurred during analysis.');
+      setError(err.message || 'An error occurred.');
     } finally {
       setIsAnalyzing(false);
+      setCurrentAction(null);
     }
   };
 
   const handleReset = () => {
-    setFile(null);
-    setLink('');
+    setAnalyzeSong(null);
+    setAnalyzeLink('');
     setCompareSong1(null);
     setCompareSong2(null);
     setCompareLink1('');
     setCompareLink2('');
-    setLyricsSong(null);
-    setLyricsLink('');
     setLyricsTheme('');
     setResult(null);
     setGeneratedLyrics(null);
@@ -192,9 +188,9 @@ export default function App() {
   const handleRewriteSegment = async (index: number) => {
     if (!generatedLyrics || !rewriteInstruction.trim()) return;
     
-    let s: SongInput | null = lyricsSong;
-    if (lyricsInputType === 'link' && lyricsLink.trim()) {
-      s = { type: 'link', link: lyricsLink.trim() };
+    let s: SongInput | null = analyzeSong;
+    if (analyzeInputType === 'link' && analyzeLink.trim()) {
+      s = { type: 'link', link: analyzeLink.trim() };
     }
     if (!s) return;
 
@@ -225,9 +221,9 @@ export default function App() {
 
   const handleRegenerateTitle = async () => {
     if (!generatedLyrics) return;
-    let s: SongInput | null = lyricsSong;
-    if (lyricsInputType === 'link' && lyricsLink.trim()) {
-      s = { type: 'link', link: lyricsLink.trim() };
+    let s: SongInput | null = analyzeSong;
+    if (analyzeInputType === 'link' && analyzeLink.trim()) {
+      s = { type: 'link', link: analyzeLink.trim() };
     }
     if (!s) return;
 
@@ -383,26 +379,15 @@ export default function App() {
         <div className="mb-8">
           <div className="bg-zinc-900/50 border border-zinc-800 rounded-2xl p-2 flex flex-wrap gap-2 max-w-3xl mx-auto">
             <button
-              onClick={() => setActiveTab('upload')}
+              onClick={() => setActiveTab('analyze')}
               className={`flex-1 min-w-[100px] flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl text-sm font-medium transition-all ${
-                activeTab === 'upload' 
+                activeTab === 'analyze' 
                   ? 'bg-zinc-800 text-white shadow-sm' 
                   : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50'
               }`}
             >
-              <Upload className="w-4 h-4" />
-              Upload
-            </button>
-            <button
-              onClick={() => setActiveTab('link')}
-              className={`flex-1 min-w-[100px] flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl text-sm font-medium transition-all ${
-                activeTab === 'link' 
-                  ? 'bg-zinc-800 text-white shadow-sm' 
-                  : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50'
-              }`}
-            >
-              <LinkIcon className="w-4 h-4" />
-              Link
+              <Sparkles className="w-4 h-4" />
+              Analyze & Lyrics
             </button>
             <button
               onClick={() => setActiveTab('compare')}
@@ -414,17 +399,6 @@ export default function App() {
             >
               <GitCompare className="w-4 h-4" />
               Compare
-            </button>
-            <button
-              onClick={() => setActiveTab('lyrics')}
-              className={`flex-1 min-w-[100px] flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl text-sm font-medium transition-all ${
-                activeTab === 'lyrics' 
-                  ? 'bg-zinc-800 text-white shadow-sm' 
-                  : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50'
-              }`}
-            >
-              <FileText className="w-4 h-4" />
-              Lyrics
             </button>
             <button
               onClick={() => setActiveTab('studio')}
@@ -461,69 +435,31 @@ export default function App() {
             <div className="lg:col-span-5 space-y-6">
               <div className="bg-zinc-900/50 border border-zinc-800 rounded-2xl p-6 min-h-[300px] flex flex-col">
               <AnimatePresence mode="wait">
-                {activeTab === 'upload' ? (
+                {activeTab === 'analyze' ? (
                   <motion.div
-                    key="upload"
+                    key="analyze"
                     initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
                     exit={{ opacity: 0, y: -10 }}
-                    className="flex-1 flex flex-col"
+                    className="flex-1 flex flex-col justify-center gap-6"
                   >
-                    <div 
-                      {...getRootPropsMain()} 
-                      className={`flex-1 border-2 border-dashed rounded-xl flex flex-col items-center justify-center p-8 text-center cursor-pointer transition-colors ${
-                        isDragActiveMain ? 'border-indigo-500 bg-indigo-500/5' : 
-                        file ? 'border-zinc-700 bg-zinc-800/30' : 'border-zinc-800 hover:border-zinc-700 hover:bg-zinc-800/30'
-                      }`}
-                    >
-                      <input {...getInputPropsMain()} />
-                      {file ? (
-                        <div className="space-y-3">
-                          <div className="w-12 h-12 rounded-full bg-indigo-500/20 text-indigo-400 flex items-center justify-center mx-auto">
-                            <Music className="w-6 h-6" />
-                          </div>
-                          <div>
-                            <p className="font-medium text-zinc-200 truncate max-w-[200px] mx-auto">{file.name}</p>
-                            <p className="text-xs text-zinc-500 mt-1">{(file.size / (1024 * 1024)).toFixed(2)} MB</p>
-                          </div>
-                          <p className="text-xs text-indigo-400 pt-2">Click or drag to replace</p>
-                        </div>
-                      ) : (
-                        <div className="space-y-3">
-                          <div className="w-12 h-12 rounded-full bg-zinc-800 flex items-center justify-center mx-auto">
-                            <Upload className="w-6 h-6 text-zinc-400" />
-                          </div>
-                          <div>
-                            <p className="font-medium text-zinc-300">Drop your audio or video file here</p>
-                            <p className="text-xs text-zinc-500 mt-1">MP3, WAV, OGG, MP4 up to 15MB</p>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  </motion.div>
-                ) : activeTab === 'link' ? (
-                  <motion.div
-                    key="link"
-                    initial={{ opacity: 0, y: 10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: -10 }}
-                    className="flex-1 flex flex-col justify-center"
-                  >
+                    {renderInputSelector(
+                      "Song (Upload or Link)", analyzeSong, analyzeInputType, setAnalyzeInputType, analyzeLink, setAnalyzeLink,
+                      getRootPropsAnalyze, getInputPropsAnalyze, isDragActiveAnalyze, () => setAnalyzeSong(null)
+                    )}
+                    
                     <div className="space-y-4">
-                      <label htmlFor="song-link" className="block text-sm font-medium text-zinc-300">
-                        Song Link or Name
+                      <label htmlFor="lyrics-theme" className="block text-sm font-medium text-zinc-300">
+                        Theme or Mood (Optional, for Lyrics)
                       </label>
                       <input
-                        id="song-link"
+                        id="lyrics-theme"
                         type="text"
-                        value={link}
-                        onChange={(e) => setLink(e.target.value)}
-                        placeholder="e.g., https://youtube.com/watch?v=... or 'Bohemian Rhapsody'"
+                        value={lyricsTheme}
+                        onChange={(e) => setLyricsTheme(e.target.value)}
+                        placeholder="e.g., 'A bittersweet breakup in the rain' or 'Cyberpunk rebellion'"
                         className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-sm text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500 transition-all"
                       />
-                      <p className="text-xs text-zinc-500">
-                        We'll use Google Search to find information about the song and analyze its characteristics.
-                      </p>
                     </div>
                   </motion.div>
                 ) : activeTab === 'compare' ? (
@@ -552,33 +488,6 @@ export default function App() {
                       "Song 2 (Current Sound)", compareSong2, compareInputType2, setCompareInputType2, compareLink2, setCompareLink2,
                       getRootPropsCompare2, getInputPropsCompare2, isDragActiveCompare2, () => setCompareSong2(null)
                     )}
-                  </motion.div>
-                ) : activeTab === 'lyrics' ? (
-                  <motion.div
-                    key="lyrics"
-                    initial={{ opacity: 0, y: 10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: -10 }}
-                    className="flex-1 flex flex-col justify-center gap-6"
-                  >
-                    {renderInputSelector(
-                      "Reference Song (for structure)", lyricsSong, lyricsInputType, setLyricsInputType, lyricsLink, setLyricsLink,
-                      getRootPropsLyrics, getInputPropsLyrics, isDragActiveLyrics, () => setLyricsSong(null)
-                    )}
-                    
-                    <div className="space-y-4">
-                      <label htmlFor="lyrics-theme" className="block text-sm font-medium text-zinc-300">
-                        Theme or Mood
-                      </label>
-                      <input
-                        id="lyrics-theme"
-                        type="text"
-                        value={lyricsTheme}
-                        onChange={(e) => setLyricsTheme(e.target.value)}
-                        placeholder="e.g., 'A bittersweet breakup in the rain' or 'Cyberpunk rebellion'"
-                        className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-sm text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500 transition-all"
-                      />
-                    </div>
                   </motion.div>
                 ) : activeTab === 'youtube' ? (
                   <motion.div
@@ -633,35 +542,56 @@ export default function App() {
                 ) : null}
               </AnimatePresence>
 
-              {activeTab !== 'youtube' && (
-                <div className="mt-6">
+              {activeTab === 'analyze' && (
+                <div className="mt-6 flex gap-4">
                   <button
-                    onClick={handleAnalyze}
+                    onClick={() => handleAnalyzeAction('analyze')}
                     disabled={
                       isAnalyzing || 
-                      (activeTab === 'upload' && !file) || 
-                      (activeTab === 'link' && !link.trim()) ||
-                      (activeTab === 'compare' && (
-                        (compareInputType1 === 'link' && !compareLink1.trim()) || (compareInputType1 === 'upload' && !compareSong1) ||
-                        (compareInputType2 === 'link' && !compareLink2.trim()) || (compareInputType2 === 'upload' && !compareSong2)
-                      )) ||
-                      (activeTab === 'lyrics' && (
-                        !lyricsTheme.trim() ||
-                        (lyricsInputType === 'link' && !lyricsLink.trim()) || (lyricsInputType === 'upload' && !lyricsSong)
-                      ))
+                      (analyzeInputType === 'link' && !analyzeLink.trim()) || 
+                      (analyzeInputType === 'upload' && !analyzeSong)
+                    }
+                    className="flex-1 bg-zinc-800 hover:bg-zinc-700 text-white font-medium py-3 px-4 rounded-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                  >
+                    {isAnalyzing && currentAction === 'analyze' ? (
+                      <><Loader2 className="w-5 h-5 animate-spin" /> Analyzing...</>
+                    ) : (
+                      <><Sparkles className="w-5 h-5" /> Analyze Song</>
+                    )}
+                  </button>
+                  <button
+                    onClick={() => handleAnalyzeAction('lyrics')}
+                    disabled={
+                      isAnalyzing || 
+                      !lyricsTheme.trim() ||
+                      (analyzeInputType === 'link' && !analyzeLink.trim()) || 
+                      (analyzeInputType === 'upload' && !analyzeSong)
+                    }
+                    className="flex-1 bg-indigo-600 hover:bg-indigo-500 text-white font-medium py-3 px-4 rounded-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                  >
+                    {isAnalyzing && currentAction === 'lyrics' ? (
+                      <><Loader2 className="w-5 h-5 animate-spin" /> Generating...</>
+                    ) : (
+                      <><FileText className="w-5 h-5" /> Generate Lyrics</>
+                    )}
+                  </button>
+                </div>
+              )}
+              {activeTab === 'compare' && (
+                <div className="mt-6">
+                  <button
+                    onClick={() => handleAnalyzeAction('compare')}
+                    disabled={
+                      isAnalyzing || 
+                      (compareInputType1 === 'link' && !compareLink1.trim()) || (compareInputType1 === 'upload' && !compareSong1) ||
+                      (compareInputType2 === 'link' && !compareLink2.trim()) || (compareInputType2 === 'upload' && !compareSong2)
                     }
                     className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-medium py-3 px-4 rounded-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                   >
-                    {isAnalyzing ? (
-                      <>
-                        <Loader2 className="w-5 h-5 animate-spin" />
-                        {activeTab === 'lyrics' ? 'Generating Lyrics...' : 'Analyzing...'}
-                      </>
+                    {isAnalyzing && currentAction === 'compare' ? (
+                      <><Loader2 className="w-5 h-5 animate-spin" /> Comparing...</>
                     ) : (
-                      <>
-                        {activeTab === 'lyrics' ? <FileText className="w-5 h-5" /> : <Sparkles className="w-5 h-5" />}
-                        {activeTab === 'compare' ? 'Compare Songs' : activeTab === 'lyrics' ? 'Generate Lyrics' : 'Analyze Song'}
-                      </>
+                      <><GitCompare className="w-5 h-5" /> Compare Songs</>
                     )}
                   </button>
                 </div>
@@ -705,14 +635,14 @@ export default function App() {
                     <div className="relative">
                       <div className="w-16 h-16 border-4 border-zinc-800 rounded-full"></div>
                       <div className="w-16 h-16 border-4 border-indigo-500 rounded-full border-t-transparent animate-spin absolute top-0 left-0"></div>
-                      {activeTab === 'lyrics' ? (
+                      {currentAction === 'lyrics' ? (
                         <FileText className="w-6 h-6 absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-zinc-400 animate-pulse" />
                       ) : (
                         <Music className="w-6 h-6 absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-zinc-400 animate-pulse" />
                       )}
                     </div>
                     <p className="text-sm animate-pulse">
-                      {activeTab === 'compare' ? 'Comparing musical DNA...' : activeTab === 'lyrics' ? 'Writing lyrics...' : 'Extracting musical DNA...'}
+                      {currentAction === 'compare' ? 'Comparing musical DNA...' : currentAction === 'lyrics' ? 'Writing lyrics...' : 'Extracting musical DNA...'}
                     </p>
                   </div>
                 ) : generatedLyrics ? (
