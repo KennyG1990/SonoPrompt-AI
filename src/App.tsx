@@ -1,10 +1,16 @@
-import { useState, useCallback } from 'react';
-import { Upload, Link as LinkIcon, Music, Loader2, Sparkles, RefreshCw, AlertCircle, GitCompare, X, FileText, Wand2, Edit3, Check, LayoutDashboard, Youtube, Download } from 'lucide-react';
+import { useState, useCallback, useEffect } from 'react';
+import { Upload, Link as LinkIcon, Music, Loader2, Sparkles, RefreshCw, AlertCircle, GitCompare, X, FileText, Wand2, Edit3, Check, LayoutDashboard, Youtube, Download, Save, Trash2, Copy } from 'lucide-react';
 import { useDropzone } from 'react-dropzone';
 import ReactMarkdown from 'react-markdown';
 import { motion, AnimatePresence } from 'motion/react';
 import { analyzeAudioFile, analyzeSongLink, compareSongs, generateLyrics, rewriteLyricSegment, suggestSongTitle, SongInput, LyricSegment } from './services/geminiService';
 import Studio from './components/Studio';
+
+export interface LyricistProfile {
+  id: string;
+  name: string;
+  rules: string;
+}
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<'analyze' | 'compare' | 'studio' | 'youtube'>('analyze');
@@ -14,6 +20,12 @@ export default function App() {
   const [analyzeInputType, setAnalyzeInputType] = useState<'upload' | 'link'>('link');
   const [analyzeLink, setAnalyzeLink] = useState('');
   const [lyricsTheme, setLyricsTheme] = useState('');
+  const [lyricistPersonality, setLyricistPersonality] = useState('');
+  const [profiles, setProfiles] = useState<LyricistProfile[]>([]);
+  const [activeProfileId, setActiveProfileId] = useState<string>('');
+  const [isSavingProfile, setIsSavingProfile] = useState(false);
+  const [newProfileName, setNewProfileName] = useState('');
+  const [copiedId, setCopiedId] = useState<string | null>(null);
   const [currentAction, setCurrentAction] = useState<'analyze' | 'lyrics' | 'compare' | null>(null);
   const [generatedLyrics, setGeneratedLyrics] = useState<LyricSegment[] | null>(null);
   const [songTitle, setSongTitle] = useState<string | null>(null);
@@ -40,6 +52,60 @@ export default function App() {
   const [ytInfo, setYtInfo] = useState<{title: string, thumbnail: string, author: string} | null>(null);
   const [isFetchingYt, setIsFetchingYt] = useState(false);
   const [isDownloadingYt, setIsDownloadingYt] = useState(false);
+
+  useEffect(() => {
+    const saved = localStorage.getItem('lyricist-profiles');
+    if (saved) {
+      try {
+        setProfiles(JSON.parse(saved));
+      } catch (e) {
+        console.error('Failed to parse profiles', e);
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem('lyricist-profiles', JSON.stringify(profiles));
+  }, [profiles]);
+
+  const handleProfileSelect = (id: string) => {
+    setActiveProfileId(id);
+    setIsSavingProfile(false);
+    if (id) {
+      const p = profiles.find(x => x.id === id);
+      if (p) setLyricistPersonality(p.rules);
+    } else {
+      setLyricistPersonality(''); 
+    }
+  };
+
+  const handlePersonalityChange = (val: string) => {
+    setLyricistPersonality(val);
+    if (activeProfileId) {
+       setProfiles(prev => prev.map(p => p.id === activeProfileId ? { ...p, rules: val } : p));
+    }
+  };
+
+  const handleSaveNewProfile = () => {
+    if (!newProfileName.trim()) return;
+    const newProfile: LyricistProfile = {
+      id: Date.now().toString(),
+      name: newProfileName.trim(),
+      rules: lyricistPersonality
+    };
+    setProfiles(prev => [...prev, newProfile]);
+    setActiveProfileId(newProfile.id);
+    setNewProfileName('');
+    setIsSavingProfile(false);
+  };
+
+  const handleDeleteProfile = () => {
+    if (activeProfileId) {
+      setProfiles(prev => prev.filter(p => p.id !== activeProfileId));
+      setActiveProfileId('');
+      setLyricistPersonality('');
+    }
+  };
 
   const onDropAnalyze = useCallback((acceptedFiles: File[]) => {
     if (acceptedFiles.length > 0) {
@@ -88,9 +154,17 @@ export default function App() {
 
   const handleAnalyzeAction = async (action: 'analyze' | 'lyrics' | 'compare') => {
     setError(null);
-    setResult(null);
-    setGeneratedLyrics(null);
-    setSongTitle(null);
+    
+    if (action === 'analyze' || action === 'compare') {
+      setResult(null);
+      setGeneratedLyrics(null);
+      setSongTitle(null);
+    } else if (action === 'lyrics') {
+      setGeneratedLyrics(null);
+      setSongTitle(null);
+      // Keep result intact so they can be viewed simultaneously
+    }
+
     setIsAnalyzing(true);
     setCurrentAction(action);
 
@@ -102,12 +176,58 @@ export default function App() {
         }
         
         if (s) {
+          let analysis = "";
           if (s.type === 'file') {
-            const analysis = await analyzeAudioFile(s.file);
-            setResult(analysis);
+            analysis = await analyzeAudioFile(s.file);
           } else {
-            const analysis = await analyzeSongLink(s.link);
-            setResult(analysis);
+            analysis = await analyzeSongLink(s.link);
+          }
+          setResult(analysis);
+
+          // Auto-populate lyrics theme from analysis
+          const extractSectionRegex = (text: string, titleRegex: RegExp, stopRegex: RegExp) => {
+            const match = text.match(titleRegex);
+            if (!match) return null;
+            const start = match.index! + match[0].length;
+            const remainder = text.substring(start);
+            const stopMatch = remainder.match(stopRegex);
+            const content = stopMatch ? remainder.substring(0, stopMatch.index) : remainder;
+            return content.replace(/\*\*/g, '').trim();
+          };
+
+          let vocalText = extractSectionRegex(analysis, /(?:5\.\s*(?:\*\*)?)?Vocal Style(?:\*\*)?[^\n]*\n?/i, /\n\s*(?:6\.|Mood)/i);
+          let moodText = extractSectionRegex(analysis, /(?:6\.\s*(?:\*\*)?)?Mood (?:&|and) Vibe(?:\*\*)?[^\n]*\n?/i, /\n\s*(?:7\.|Production)/i);
+          
+          // Fallbacks just in case the numbers get jumbled
+          if (!vocalText) vocalText = extractSectionRegex(analysis, /Vocal Style.*?\n/i, /\n\s*(?:6\.|Mood)/i);
+          if (!moodText) moodText = extractSectionRegex(analysis, /Mood (?:&|and) Vibe.*?\n/i, /\n\s*(?:7\.|Production)/i);
+
+          const themeParts = [];
+          if (vocalText) themeParts.push(`Vocal Style: ${vocalText}`);
+          if (moodText) themeParts.push(`Mood & Vibe: ${moodText}`);
+          
+          let extractedTheme = lyricsTheme;
+          if (themeParts.length > 0) {
+            extractedTheme = themeParts.join(' | ');
+            setLyricsTheme(extractedTheme);
+          }
+
+          // Auto-generate lyrics directly after analysis
+          if (extractedTheme) {
+            setCurrentAction('lyrics'); // Switch loading state
+
+            const generated = await generateLyrics(s, extractedTheme, lyricistPersonality);
+            setGeneratedLyrics(generated);
+            
+            setIsGeneratingTitle(true);
+            try {
+              const title = await suggestSongTitle(s, generated);
+              setSongTitle(title);
+            } catch (e) {
+              console.error("Failed to generate title", e);
+            } finally {
+              setIsGeneratingTitle(false);
+            }
           }
         } else {
           setError('Please provide a song to analyze.');
@@ -136,7 +256,7 @@ export default function App() {
         }
 
         if (s && lyricsTheme.trim()) {
-          const lyrics = await generateLyrics(s, lyricsTheme.trim());
+          const lyrics = await generateLyrics(s, lyricsTheme.trim(), lyricistPersonality);
           setGeneratedLyrics(lyrics);
           
           // Automatically suggest title after lyrics generation
@@ -170,10 +290,18 @@ export default function App() {
     setCompareLink1('');
     setCompareLink2('');
     setLyricsTheme('');
+    setLyricistPersonality('');
     setResult(null);
     setGeneratedLyrics(null);
     setSongTitle(null);
     setError(null);
+    setCopiedId(null);
+  };
+
+  const handleCopy = (text: string, id: string) => {
+    navigator.clipboard.writeText(text);
+    setCopiedId(id);
+    setTimeout(() => setCopiedId(null), 2000);
   };
 
   const handleSaveSegmentEdit = (index: number) => {
@@ -202,7 +330,7 @@ export default function App() {
     setGeneratedLyrics(newLyrics);
 
     try {
-      const newText = await rewriteLyricSegment(s, generatedLyrics, index, rewriteInstruction.trim());
+      const newText = await rewriteLyricSegment(s, generatedLyrics, index, rewriteInstruction.trim(), lyricistPersonality);
       const updatedLyrics = [...generatedLyrics];
       updatedLyrics[index].text = newText;
       setGeneratedLyrics(updatedLyrics);
@@ -425,122 +553,178 @@ export default function App() {
           </div>
         </div>
 
-        {activeTab === 'studio' ? (
-          <div className="-mx-6 lg:mx-0">
-            <Studio />
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-            {/* Input Section */}
-            <div className="lg:col-span-5 space-y-6">
-              <div className="bg-zinc-900/50 border border-zinc-800 rounded-2xl p-6 min-h-[300px] flex flex-col">
-              <AnimatePresence mode="wait">
-                {activeTab === 'analyze' ? (
-                  <motion.div
-                    key="analyze"
-                    initial={{ opacity: 0, y: 10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: -10 }}
-                    className="flex-1 flex flex-col justify-center gap-6"
-                  >
-                    {renderInputSelector(
-                      "Song (Upload or Link)", analyzeSong, analyzeInputType, setAnalyzeInputType, analyzeLink, setAnalyzeLink,
-                      getRootPropsAnalyze, getInputPropsAnalyze, isDragActiveAnalyze, () => setAnalyzeSong(null)
-                    )}
-                    
-                    <div className="space-y-4">
-                      <label htmlFor="lyrics-theme" className="block text-sm font-medium text-zinc-300">
-                        Theme or Mood (Optional, for Lyrics)
-                      </label>
+        <div className={activeTab === 'studio' ? "block -mx-6 lg:mx-0 h-[calc(100vh-140px)]" : "hidden"}>
+          <Studio />
+        </div>
+
+        <div className={activeTab !== 'studio' ? "grid grid-cols-1 lg:grid-cols-12 gap-8" : "hidden"}>
+          {/* Input Section */}
+          <div className="lg:col-span-5 space-y-6">
+            <div className="bg-zinc-900/50 border border-zinc-800 rounded-2xl p-6 min-h-[300px] flex flex-col">
+              <div className={activeTab === 'analyze' ? 'flex-1 flex flex-col justify-center gap-6' : 'hidden'}>
+                {renderInputSelector(
+                  "Song (Upload or Link)", analyzeSong, analyzeInputType, setAnalyzeInputType, analyzeLink, setAnalyzeLink,
+                  getRootPropsAnalyze, getInputPropsAnalyze, isDragActiveAnalyze, () => setAnalyzeSong(null)
+                )}
+                
+                <div className="space-y-4">
+                  <label htmlFor="lyrics-theme" className="block text-sm font-medium text-zinc-300">
+                    Theme or Mood (Optional, for Lyrics)
+                  </label>
+                  <input
+                    id="lyrics-theme"
+                    type="text"
+                    value={lyricsTheme}
+                    onChange={(e) => setLyricsTheme(e.target.value)}
+                    placeholder="e.g., 'A bittersweet breakup in the rain' or 'Cyberpunk rebellion'"
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-sm text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500 transition-all"
+                  />
+                </div>
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <label htmlFor="lyricist-personality" className="block text-sm font-medium text-zinc-300">
+                      Lyricist Personality & Rules (Optional)
+                    </label>
+                    <div className="flex items-center gap-2">
+                      <select
+                        value={activeProfileId}
+                        onChange={(e) => handleProfileSelect(e.target.value)}
+                        className="bg-zinc-950 border border-zinc-700 text-xs text-zinc-300 rounded-md px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                      >
+                        <option value="">-- Custom / None --</option>
+                        {profiles.map(p => (
+                          <option key={p.id} value={p.id}>{p.name}</option>
+                        ))}
+                      </select>
+
+                      {activeProfileId ? (
+                        <button
+                          onClick={handleDeleteProfile}
+                          className="p-1 text-zinc-500 hover:text-red-400 hover:bg-zinc-800 rounded transition-colors"
+                          title="Delete Profile"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => setIsSavingProfile(true)}
+                          className="p-1 text-zinc-500 hover:text-indigo-400 hover:bg-zinc-800 rounded transition-colors disabled:opacity-50"
+                          title="Save as Profile"
+                          disabled={!lyricistPersonality.trim()}
+                        >
+                          <Save className="w-4 h-4" />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {isSavingProfile && (
+                    <motion.div
+                      initial={{ opacity: 0, y: -10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      className="flex items-center gap-2 bg-zinc-900 border border-zinc-800 p-2 rounded-xl mb-4"
+                    >
                       <input
-                        id="lyrics-theme"
                         type="text"
-                        value={lyricsTheme}
-                        onChange={(e) => setLyricsTheme(e.target.value)}
-                        placeholder="e.g., 'A bittersweet breakup in the rain' or 'Cyberpunk rebellion'"
-                        className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-sm text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500 transition-all"
+                        value={newProfileName}
+                        onChange={(e) => setNewProfileName(e.target.value)}
+                        placeholder="Enter profile name (e.g. 'Hip Hop')"
+                        className="flex-1 bg-zinc-950 border border-zinc-700 rounded-lg px-3 py-1.5 text-sm text-zinc-200 focus:outline-none focus:border-indigo-500"
+                        autoFocus
                       />
-                    </div>
-                  </motion.div>
-                ) : activeTab === 'compare' ? (
-                  <motion.div
-                    key="compare"
-                    initial={{ opacity: 0, y: 10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: -10 }}
-                    className="flex-1 flex flex-col justify-center gap-6"
-                  >
-                    {renderInputSelector(
-                      "Song 1 (Target Sound)", compareSong1, compareInputType1, setCompareInputType1, compareLink1, setCompareLink1,
-                      getRootPropsCompare1, getInputPropsCompare1, isDragActiveCompare1, () => setCompareSong1(null)
-                    )}
-                    
-                    <div className="relative flex items-center justify-center py-2">
-                      <div className="absolute inset-0 flex items-center">
-                        <div className="w-full border-t border-zinc-800"></div>
-                      </div>
-                      <div className="relative bg-zinc-900/50 px-4 text-xs font-medium text-zinc-500 uppercase tracking-widest">
-                        VS
-                      </div>
-                    </div>
+                      <button
+                        onClick={handleSaveNewProfile}
+                        disabled={!newProfileName.trim()}
+                        className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white px-3 py-1.5 rounded-lg text-sm font-medium transition-colors"
+                      >
+                        Save
+                      </button>
+                      <button
+                        onClick={() => {
+                          setIsSavingProfile(false);
+                          setNewProfileName('');
+                        }}
+                        className="text-zinc-400 hover:text-zinc-200 px-2 py-1.5 text-sm transition-colors"
+                      >
+                        Cancel
+                      </button>
+                    </motion.div>
+                  )}
 
-                    {renderInputSelector(
-                      "Song 2 (Current Sound)", compareSong2, compareInputType2, setCompareInputType2, compareLink2, setCompareLink2,
-                      getRootPropsCompare2, getInputPropsCompare2, isDragActiveCompare2, () => setCompareSong2(null)
-                    )}
-                  </motion.div>
-                ) : activeTab === 'youtube' ? (
-                  <motion.div
-                    key="youtube"
-                    initial={{ opacity: 0, y: 10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: -10 }}
-                    className="flex-1 flex flex-col justify-center gap-6"
-                  >
-                    <div className="space-y-4">
-                      <label htmlFor="yt-link" className="block text-sm font-medium text-zinc-300">
-                        YouTube Video Link
-                      </label>
-                      <div className="flex gap-2">
-                        <input
-                          id="yt-link"
-                          type="text"
-                          value={ytLink}
-                          onChange={(e) => setYtLink(e.target.value)}
-                          placeholder="https://youtube.com/watch?v=..."
-                          className="flex-1 bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-sm text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500 transition-all"
-                        />
-                        <button
-                          onClick={handleFetchYtInfo}
-                          disabled={!ytLink.trim() || isFetchingYt}
-                          className="bg-zinc-800 hover:bg-zinc-700 text-white px-4 py-3 rounded-xl transition-colors disabled:opacity-50 flex items-center justify-center min-w-[100px]"
-                        >
-                          {isFetchingYt ? <Loader2 className="w-5 h-5 animate-spin" /> : 'Fetch Info'}
-                        </button>
-                      </div>
-                    </div>
+                  <textarea
+                    id="lyricist-personality"
+                    value={lyricistPersonality}
+                    onChange={(e) => handlePersonalityChange(e.target.value)}
+                    placeholder={activeProfileId ? "Edit the rules for this profile here... Changes are saved automatically." : "e.g., 'Write in the style of Eminem. Use multi-syllabic rhymes. Do not use generic structures. Be highly explicit and raw.'"}
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-sm text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500 transition-all min-h-[100px] custom-scrollbar resize-y mt-2"
+                  />
+                </div>
+              </div>
 
-                    {ytInfo && (
-                      <div className="bg-zinc-950/50 border border-zinc-800 rounded-xl p-4 flex gap-4 items-center">
-                        {ytInfo.thumbnail && (
-                          <img src={ytInfo.thumbnail} alt={ytInfo.title} className="w-24 h-auto rounded-lg object-cover" />
-                        )}
-                        <div className="flex-1 min-w-0">
-                          <h3 className="text-zinc-200 font-medium truncate">{ytInfo.title}</h3>
-                          <p className="text-zinc-500 text-sm truncate">{ytInfo.author}</p>
-                        </div>
-                        <button
-                          onClick={handleDownloadYt}
-                          className="bg-indigo-600 hover:bg-indigo-500 text-white p-3 rounded-xl transition-colors flex-shrink-0"
-                          title="Download Audio"
-                        >
-                          <Download className="w-5 h-5" />
-                        </button>
-                      </div>
+              <div className={activeTab === 'compare' ? 'flex-1 flex flex-col justify-center gap-6' : 'hidden'}>
+                {renderInputSelector(
+                  "Song 1 (Target Sound)", compareSong1, compareInputType1, setCompareInputType1, compareLink1, setCompareLink1,
+                  getRootPropsCompare1, getInputPropsCompare1, isDragActiveCompare1, () => setCompareSong1(null)
+                )}
+                
+                <div className="relative flex items-center justify-center py-2">
+                  <div className="absolute inset-0 flex items-center">
+                    <div className="w-full border-t border-zinc-800"></div>
+                  </div>
+                  <div className="relative bg-zinc-900/50 px-4 text-xs font-medium text-zinc-500 uppercase tracking-widest">
+                    VS
+                  </div>
+                </div>
+
+                {renderInputSelector(
+                  "Song 2 (Current Sound)", compareSong2, compareInputType2, setCompareInputType2, compareLink2, setCompareLink2,
+                  getRootPropsCompare2, getInputPropsCompare2, isDragActiveCompare2, () => setCompareSong2(null)
+                )}
+              </div>
+
+              <div className={activeTab === 'youtube' ? 'flex-1 flex flex-col justify-center gap-6' : 'hidden'}>
+                <div className="space-y-4">
+                  <label htmlFor="yt-link" className="block text-sm font-medium text-zinc-300">
+                    YouTube Video Link
+                  </label>
+                  <div className="flex gap-2">
+                    <input
+                      id="yt-link"
+                      type="text"
+                      value={ytLink}
+                      onChange={(e) => setYtLink(e.target.value)}
+                      placeholder="https://youtube.com/watch?v=..."
+                      className="flex-1 bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-sm text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500 transition-all"
+                    />
+                    <button
+                      onClick={handleFetchYtInfo}
+                      disabled={!ytLink.trim() || isFetchingYt}
+                      className="bg-zinc-800 hover:bg-zinc-700 text-white px-4 py-3 rounded-xl transition-colors disabled:opacity-50 flex items-center justify-center min-w-[100px]"
+                    >
+                      {isFetchingYt ? <Loader2 className="w-5 h-5 animate-spin" /> : 'Fetch Info'}
+                    </button>
+                  </div>
+                </div>
+
+                {ytInfo && (
+                  <div className="bg-zinc-950/50 border border-zinc-800 rounded-xl p-4 flex gap-4 items-center">
+                    {ytInfo.thumbnail && (
+                      <img src={ytInfo.thumbnail} alt={ytInfo.title} className="w-24 h-auto rounded-lg object-cover" />
                     )}
-                  </motion.div>
-                ) : null}
-              </AnimatePresence>
+                    <div className="flex-1 min-w-0">
+                      <h3 className="text-zinc-200 font-medium truncate">{ytInfo.title}</h3>
+                      <p className="text-zinc-500 text-sm truncate">{ytInfo.author}</p>
+                    </div>
+                    <button
+                      onClick={handleDownloadYt}
+                      className="bg-indigo-600 hover:bg-indigo-500 text-white p-3 rounded-xl transition-colors flex-shrink-0"
+                      title="Download Audio"
+                    >
+                      <Download className="w-5 h-5" />
+                    </button>
+                  </div>
+                )}
+              </div>
 
               {activeTab === 'analyze' && (
                 <div className="mt-6 flex gap-4">
@@ -615,8 +799,8 @@ export default function App() {
             <div className="bg-zinc-900/50 border border-zinc-800 rounded-2xl p-6 h-full min-h-[400px] flex flex-col">
               <div className="flex items-center justify-between mb-6 pb-4 border-b border-zinc-800/50">
                 <h2 className="text-lg font-medium text-zinc-200 flex items-center gap-2">
-                  {generatedLyrics ? <FileText className="w-5 h-5 text-indigo-400" /> : <Music className="w-5 h-5 text-indigo-400" />}
-                  {generatedLyrics ? 'Generated Lyrics' : 'Analysis Result'}
+                  {generatedLyrics && !result ? <FileText className="w-5 h-5 text-indigo-400" /> : <Music className="w-5 h-5 text-indigo-400" />}
+                  {generatedLyrics && !result ? 'Generated Lyrics' : generatedLyrics && result ? 'Analysis & Lyrics' : 'Analysis Result'}
                 </h2>
                 {(result || generatedLyrics) && (
                   <button 
@@ -645,12 +829,41 @@ export default function App() {
                       {currentAction === 'compare' ? 'Comparing musical DNA...' : currentAction === 'lyrics' ? 'Writing lyrics...' : 'Extracting musical DNA...'}
                     </p>
                   </div>
-                ) : generatedLyrics ? (
-                  <motion.div 
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    className="space-y-6"
-                  >
+                ) : generatedLyrics || result ? (
+                  <div className="flex flex-col gap-10">
+                    {result && (
+                      <motion.div 
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        className="prose prose-invert prose-zinc max-w-none prose-p:leading-relaxed prose-headings:text-zinc-200 prose-a:text-indigo-400 relative group"
+                      >
+                        <div className="absolute top-0 right-0 opacity-0 group-hover:opacity-100 transition-opacity">
+                          {result.toLowerCase().includes('generator prompt') && (
+                            <button 
+                              onClick={() => {
+                                const match = result.match(/Music Generator Prompt(?:\*\*)?:?\s*([\s\S]*)$/i);
+                                const promptPart = match ? match[1].trim() : result;
+                                handleCopy(promptPart, 'prompt');
+                              }}
+                              className="p-2 bg-zinc-900 border border-zinc-800 rounded-lg text-zinc-400 hover:text-indigo-400 transition-colors flex items-center gap-2 text-xs"
+                              title="Copy Generator Prompt"
+                            >
+                              {copiedId === 'prompt' ? <><Check className="w-3.5 h-3.5 text-green-500" /> Copied</> : <><Copy className="w-3.5 h-3.5" /> Copy Prompt</>}
+                            </button>
+                          )}
+                        </div>
+                        <ReactMarkdown>{result}</ReactMarkdown>
+                      </motion.div>
+                    )}
+
+                    {generatedLyrics && result && <div className="w-full h-px bg-zinc-800/50"></div>}
+
+                    {generatedLyrics && (
+                      <motion.div 
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        className="space-y-6"
+                      >
                     <div className="bg-zinc-950/50 border border-zinc-800/50 rounded-xl p-4 flex items-center justify-between">
                       <div>
                         <p className="text-xs text-zinc-500 uppercase tracking-wider font-semibold mb-1">Suggested Title</p>
@@ -663,18 +876,42 @@ export default function App() {
                           <h3 className="text-xl font-bold text-zinc-100">{songTitle || "Untitled"}</h3>
                         )}
                       </div>
-                      <button 
-                        onClick={handleRegenerateTitle}
-                        disabled={isGeneratingTitle}
-                        className="p-2 hover:bg-zinc-800 rounded-lg text-zinc-400 hover:text-indigo-400 transition-colors disabled:opacity-50"
-                        title="Regenerate Title"
-                      >
-                        <RefreshCw className="w-4 h-4" />
-                      </button>
+                      <div className="flex items-center gap-1">
+                        {songTitle && (
+                          <button 
+                            onClick={() => handleCopy(songTitle, 'title')}
+                            className="p-2 hover:bg-zinc-800 rounded-lg text-zinc-400 hover:text-indigo-400 transition-colors"
+                            title="Copy Title"
+                          >
+                            {copiedId === 'title' ? <Check className="w-4 h-4 text-green-500" /> : <Copy className="w-4 h-4" />}
+                          </button>
+                        )}
+                        <button 
+                          onClick={handleRegenerateTitle}
+                          disabled={isGeneratingTitle}
+                          className="p-2 hover:bg-zinc-800 rounded-lg text-zinc-400 hover:text-indigo-400 transition-colors disabled:opacity-50"
+                          title="Regenerate Title"
+                        >
+                          <RefreshCw className="w-4 h-4" />
+                        </button>
+                      </div>
                     </div>
 
                     <div className="space-y-4">
-                      {generatedLyrics.map((segment, index) => (
+                      {Array.isArray(generatedLyrics) && generatedLyrics.length > 0 && (
+                        <div className="flex justify-end px-1">
+                          <button
+                            onClick={() => {
+                              const text = generatedLyrics.map(s => `[${s.label}]\n${s.text}`).join('\n\n');
+                              handleCopy(text, 'lyrics');
+                            }}
+                            className="text-xs font-medium text-zinc-500 hover:text-indigo-400 transition-colors flex items-center gap-1.5"
+                          >
+                            {copiedId === 'lyrics' ? <><Check className="w-3 h-3 text-green-500" /> Copied to clipboard</> : <><Copy className="w-3 h-3" /> Copy All Lyrics</>}
+                          </button>
+                        </div>
+                      )}
+                      {Array.isArray(generatedLyrics) && generatedLyrics.map((segment, index) => (
                         <div key={index} className="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden group">
                           <div className="bg-zinc-950/50 px-4 py-2 border-b border-zinc-800 flex items-center justify-between">
                             <span className="text-xs font-semibold text-indigo-400 uppercase tracking-wider">{segment.label}</span>
@@ -768,14 +1005,8 @@ export default function App() {
                       ))}
                     </div>
                   </motion.div>
-                ) : result ? (
-                  <motion.div 
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    className="prose prose-invert prose-zinc max-w-none prose-p:leading-relaxed prose-headings:text-zinc-200 prose-a:text-indigo-400"
-                  >
-                    <ReactMarkdown>{result}</ReactMarkdown>
-                  </motion.div>
+                    )}
+                  </div>
                 ) : (
                   <div className="h-full flex flex-col items-center justify-center text-zinc-600 space-y-3 py-12">
                     <Sparkles className="w-10 h-10 opacity-20" />
@@ -785,8 +1016,7 @@ export default function App() {
               </div>
             </div>
           </div>
-          </div>
-        )}
+        </div>
       </main>
     </div>
   );

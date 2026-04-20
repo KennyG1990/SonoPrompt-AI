@@ -31,7 +31,11 @@ Provide a comprehensive breakdown of its musical DNA, including:
 6. **Mood & Vibe**: The overall atmosphere and emotional resonance.
 7. **Production Quality**: Lo-fi, polished, wall-of-sound, intimate, etc.
 
-Finally, provide a highly optimized **Music Generator Prompt** (for tools like Suno or Udio) that uses these characteristics to generate a NEW song that sounds like it belongs on the same album or is by the same artist, without being a direct clone. The prompt should be concise, comma-separated keywords and phrases, focusing on sonic elements rather than lyrics.`;
+Finally, provide a highly optimized **Music Generator Prompt** (for tools like Suno or Udio) that uses these characteristics to generate a NEW song that sounds like it belongs on the same album or is by the same artist. 
+
+Make this prompt highly comprehensive (up to about 1000 characters). You MUST include a combination of the general sonic summary, but crucially, include almost verbatim the "Mood & Vibe" portion, as well as the "Vocal Style" details. Structure it like so: "[comma-separated sonic summary/genres/production]. Atmosphere: [Mood & Vibe details]. Delivery/Timbre: [Vocal Style details]."
+
+CRITICAL: The final generator prompt MUST be LESS than 1000 characters in total length.`;
 
   const response = await ai.models.generateContent({
     model: "gemini-2.5-flash",
@@ -123,7 +127,11 @@ Provide a comprehensive breakdown of its musical DNA, including:
 6. **Mood & Vibe**: The overall atmosphere and emotional resonance.
 7. **Production Quality**: Lo-fi, polished, wall-of-sound, intimate, etc.
 
-Finally, provide a highly optimized **Music Generator Prompt** (for tools like Suno or Udio) that uses these characteristics to generate a NEW song that sounds like it belongs on the same album or is by the same artist, without being a direct clone. The prompt should be concise, comma-separated keywords and phrases, focusing on sonic elements rather than lyrics.`;
+Finally, provide a highly optimized **Music Generator Prompt** (for tools like Suno or Udio) that uses these characteristics to generate a NEW song that sounds like it belongs on the same album or is by the same artist. 
+
+Make this prompt highly comprehensive (up to about 1000 characters). You MUST include a combination of the general sonic summary, but crucially, include almost verbatim the "Mood & Vibe" portion, as well as the "Vocal Style" details. Structure it like so: "[comma-separated sonic summary/genres/production]. Atmosphere: [Mood & Vibe details]. Delivery/Timbre: [Vocal Style details]."
+
+CRITICAL: The final generator prompt MUST be LESS than 1000 characters in total length.`;
 
   const response = await ai.models.generateContent({
     model: "gemini-3-flash-preview",
@@ -141,13 +149,13 @@ export type LyricSegment = {
   text: string;
 };
 
-export async function generateLyrics(song: SongInput, theme: string): Promise<LyricSegment[]> {
+export async function generateLyrics(song: SongInput, theme: string, personality?: string): Promise<LyricSegment[]> {
   const parts: any[] = [];
   
   let promptText = `You are an expert songwriter. Analyze the provided song to understand its structure, rhythm, and mood.
 Then, write original lyrics for a NEW song based on the following theme/mood: "${theme}".
 
-CRITICAL INSTRUCTION: If a URL (like a YouTube or Spotify link) is provided as the Reference Song, you MUST use the urlContext tool to read the page and identify the ACTUAL song title and artist. DO NOT guess or hallucinate the song based on the URL string alone. Once you have the correct song title and artist, use Google Search to find accurate information about its structure and lyrics.
+${personality ? `CRITICAL LYRICIST PERSONALITY AND RULES:\n${personality}\n\nYou MUST strictly adhere to these rules when writing the lyrics.\n\n` : ''}CRITICAL INSTRUCTION: If a URL (like a YouTube or Spotify link) is provided as the Reference Song, you MUST use the urlContext tool to read the page and identify the ACTUAL song title and artist. DO NOT guess or hallucinate the song based on the URL string alone. Once you have the correct song title and artist, use Google Search to find accurate information about its structure and lyrics.
 
 The lyrics should match the structural style of the reference song (e.g., Verse, Chorus, Verse, Chorus, Bridge, Outro).
 Return the result as a JSON array of segments, where each segment has a "label" (e.g., "Verse 1", "Chorus") and "text" (the lyrics for that section).`;
@@ -166,14 +174,19 @@ Return the result as a JSON array of segments, where each segment has a "label" 
 
   parts.push({ text: promptText });
 
+  const safetySettings: any = [
+    { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
+    { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_NONE' },
+    { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' },
+    { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' }
+  ];
+
   const response = await ai.models.generateContent({
     model: "gemini-3-flash-preview",
     contents: { parts },
     config: {
-      // Cannot use tools with responseMimeType: 'application/json'
-      // Wait, if we need urlContext, we can't use responseMimeType: 'application/json'
-      // So we must instruct the model to return ONLY JSON and parse it.
       tools: [{ googleSearch: {} }, { urlContext: {} }],
+      safetySettings
     },
   });
 
@@ -184,7 +197,23 @@ Return the result as a JSON array of segments, where each segment has a "label" 
     if (jsonMatch) {
       jsonStr = jsonMatch[1];
     }
-    return JSON.parse(jsonStr);
+    const parsed = JSON.parse(jsonStr);
+    
+    // Ensure we always return an array
+    if (Array.isArray(parsed)) {
+      return parsed;
+    } else if (parsed && typeof parsed === 'object') {
+      // Model might wrap it in an object like { "lyrics": [...] } or { "segments": [...] }
+      if (Array.isArray(parsed.lyrics)) return parsed.lyrics;
+      if (Array.isArray(parsed.segments)) return parsed.segments;
+      if (Array.isArray(parsed.result)) return parsed.result;
+      
+      // If it's a single object with label/text, wrap it
+      if (parsed.label && parsed.text) return [parsed];
+    }
+    
+    console.warn("Unexpected JSON structure for lyrics:", parsed);
+    return [];
   } catch (e) {
     console.error("Failed to parse lyrics JSON", e);
     return [];
@@ -223,11 +252,19 @@ Return the result STRICTLY as a JSON object with the keys: "title", "prompt", "s
 
   parts.push({ text: promptText });
 
+  const safetySettings: any = [
+    { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
+    { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_NONE' },
+    { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' },
+    { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' }
+  ];
+
   const response = await ai.models.generateContent({
     model: "gemini-3-flash-preview",
     contents: { parts },
     config: {
       tools: [{ googleSearch: {} }, { urlContext: {} }],
+      safetySettings
     },
   });
 
@@ -262,16 +299,21 @@ export async function rewriteLyricSegment(
   song: SongInput, 
   fullLyrics: LyricSegment[], 
   segmentIndex: number, 
-  instruction: string
+  instruction: string,
+  personality?: string
 ): Promise<string> {
   const parts: any[] = [];
   
+  if (!fullLyrics || !Array.isArray(fullLyrics)) {
+    throw new Error("Invalid fullLyrics provided to rewriteLyricSegment");
+  }
+
   const targetSegment = fullLyrics[segmentIndex];
   const contextLyrics = fullLyrics.map(s => `[${s.label}]\n${s.text}`).join('\n\n');
 
   let promptText = `You are an expert songwriter. You are helping to rewrite a specific section of lyrics for a song.
 
-CRITICAL INSTRUCTION: If a URL (like a YouTube or Spotify link) is provided as the Reference Song, you MUST use the urlContext tool to read the page and identify the ACTUAL song title and artist. DO NOT guess or hallucinate the song based on the URL string alone. Once you have the correct song title and artist, use Google Search to find accurate information about its structure and lyrics.
+${personality ? `CRITICAL LYRICIST PERSONALITY AND RULES:\n${personality}\n\nYou MUST strictly adhere to these rules when writing the rewrite.\n\n` : ''}CRITICAL INSTRUCTION: If a URL (like a YouTube or Spotify link) is provided as the Reference Song, you MUST use the urlContext tool to read the page and identify the ACTUAL song title and artist. DO NOT guess or hallucinate the song based on the URL string alone. Once you have the correct song title and artist, use Google Search to find accurate information about its structure and lyrics.
 
 Here are the full current lyrics for context:
 ${contextLyrics}
@@ -298,11 +340,19 @@ Return ONLY the rewritten text for this section. Do not include the label.`;
 
   parts.push({ text: promptText });
 
+  const safetySettings: any = [
+    { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
+    { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_NONE' },
+    { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' },
+    { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' }
+  ];
+
   const response = await ai.models.generateContent({
     model: "gemini-3-flash-preview",
     contents: { parts },
     config: {
       tools: [{ googleSearch: {} }, { urlContext: {} }],
+      safetySettings
     },
   });
 
@@ -311,6 +361,12 @@ Return ONLY the rewritten text for this section. Do not include the label.`;
 
 export async function suggestSongTitle(song: SongInput, fullLyrics: LyricSegment[]): Promise<string> {
   const parts: any[] = [];
+  
+  if (!fullLyrics || !Array.isArray(fullLyrics)) {
+    console.error("suggestSongTitle received invalid fullLyrics:", fullLyrics);
+    return "Untitled";
+  }
+
   const contextLyrics = fullLyrics.map(s => `[${s.label}]\n${s.text}`).join('\n\n');
 
   let promptText = `You are an expert songwriter and producer. Based on the musical context of the reference song and the following lyrics, suggest a single, compelling title for this new song.
@@ -336,11 +392,19 @@ Return ONLY the suggested title, without quotes or extra text.`;
 
   parts.push({ text: promptText });
 
+  const safetySettings: any = [
+    { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
+    { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_NONE' },
+    { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' },
+    { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' }
+  ];
+
   const response = await ai.models.generateContent({
     model: "gemini-3-flash-preview",
     contents: { parts },
     config: {
       tools: [{ googleSearch: {} }, { urlContext: {} }],
+      safetySettings
     },
   });
 

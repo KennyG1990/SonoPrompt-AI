@@ -1,6 +1,10 @@
 import express from 'express';
 import { createServer as createViteServer } from 'vite';
 import { Readable } from 'stream';
+import { google } from 'googleapis';
+import multer from 'multer';
+
+const upload = multer({ storage: multer.memoryStorage() });
 
 async function startServer() {
   const app = express();
@@ -11,6 +15,109 @@ async function startServer() {
   // API Routes
   app.get('/api/health', (req, res) => {
     res.json({ status: 'ok' });
+  });
+
+  app.get('/api/auth/youtube/url', (req, res) => {
+    const redirectUri = req.query.redirect_uri as string;
+    if (!redirectUri) {
+      return res.status(400).json({ error: 'Missing redirect_uri' });
+    }
+    const oauth2Client = new google.auth.OAuth2(
+      process.env.YOUTUBE_CLIENT_ID,
+      process.env.YOUTUBE_CLIENT_SECRET,
+      redirectUri
+    );
+
+    const url = oauth2Client.generateAuthUrl({
+      access_type: 'offline',
+      scope: ['https://www.googleapis.com/auth/youtube.upload']
+    });
+
+    res.json({ url });
+  });
+
+  app.get(['/api/auth/youtube/callback', '/api/auth/youtube/callback/'], async (req, res) => {
+    const { code } = req.query;
+    // We need to reconstruct the redirect URI to match what was sent
+    // The easiest way is to use the same origin
+    const protocol = req.headers['x-forwarded-proto'] || req.protocol;
+    const host = req.headers['x-forwarded-host'] || req.get('host');
+    const redirectUri = `${protocol}://${host}/api/auth/youtube/callback`;
+    
+    try {
+      const oauth2Client = new google.auth.OAuth2(
+        process.env.YOUTUBE_CLIENT_ID,
+        process.env.YOUTUBE_CLIENT_SECRET,
+        redirectUri
+      );
+      
+      const { tokens } = await oauth2Client.getToken(code as string);
+      
+      res.send(`
+        <html>
+          <body>
+            <script>
+              if (window.opener) {
+                window.opener.postMessage({ type: 'YOUTUBE_AUTH_SUCCESS', tokens: ${JSON.stringify(tokens)} }, '*');
+                window.close();
+              } else {
+                window.location.href = '/';
+              }
+            </script>
+            <p>Authentication successful. This window should close automatically.</p>
+          </body>
+        </html>
+      `);
+    } catch (error) {
+      console.error('YouTube auth callback error:', error);
+      res.status(500).send('Authentication failed');
+    }
+  });
+
+  app.post('/api/youtube/upload', upload.single('video'), async (req, res) => {
+    try {
+      const { title, description, tokens } = req.body;
+      const videoFile = req.file;
+
+      if (!videoFile || !tokens) {
+        return res.status(400).json({ error: 'Missing video or tokens' });
+      }
+
+      const parsedTokens = JSON.parse(tokens);
+
+      const oauth2Client = new google.auth.OAuth2(
+        process.env.YOUTUBE_CLIENT_ID,
+        process.env.YOUTUBE_CLIENT_SECRET
+      );
+      oauth2Client.setCredentials(parsedTokens);
+
+      const youtube = google.youtube({ version: 'v3', auth: oauth2Client });
+
+      const videoStream = new Readable();
+      videoStream.push(videoFile.buffer);
+      videoStream.push(null);
+
+      const response = await youtube.videos.insert({
+        part: ['snippet', 'status'],
+        requestBody: {
+          snippet: {
+            title,
+            description,
+          },
+          status: {
+            privacyStatus: 'private',
+          },
+        },
+        media: {
+          body: videoStream,
+        },
+      });
+
+      res.json({ success: true, videoId: response.data.id });
+    } catch (error: any) {
+      console.error('YouTube upload error:', error);
+      res.status(500).json({ error: error.message || 'Upload failed' });
+    }
   });
 
   // Public Invidious API instances that act as proxies to bypass YouTube's datacenter blocks

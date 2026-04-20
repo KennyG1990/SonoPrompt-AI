@@ -174,7 +174,8 @@ export default function Studio() {
 
   const handleConnectYoutube = async () => {
     try {
-      const res = await fetch('/api/auth/youtube/url');
+      const redirectUri = `${window.location.origin}/api/auth/youtube/callback`;
+      const res = await fetch(`/api/auth/youtube/url?redirect_uri=${encodeURIComponent(redirectUri)}`);
       const data = await res.json();
       window.open(data.url, 'oauth_popup', 'width=600,height=700');
     } catch (err) {
