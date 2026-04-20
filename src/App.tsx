@@ -1,9 +1,9 @@
 import { useState, useCallback, useEffect } from 'react';
-import { Upload, Link as LinkIcon, Music, Loader2, Sparkles, RefreshCw, AlertCircle, GitCompare, X, FileText, Wand2, Edit3, Check, LayoutDashboard, Youtube, Download, Save, Trash2, Copy } from 'lucide-react';
+import { Upload, Link as LinkIcon, Music, Loader2, Sparkles, RefreshCw, AlertCircle, GitCompare, X, FileText, Wand2, Edit3, Check, LayoutDashboard, Youtube, Download, Save, Trash2, Copy, Mic } from 'lucide-react';
 import { useDropzone } from 'react-dropzone';
 import ReactMarkdown from 'react-markdown';
 import { motion, AnimatePresence } from 'motion/react';
-import { analyzeAudioFile, analyzeSongLink, compareSongs, generateLyrics, rewriteLyricSegment, suggestSongTitle, SongInput, LyricSegment } from './services/geminiService';
+import { analyzeAudioFile, analyzeSongLink, compareSongs, generateLyrics, rewriteLyricSegment, suggestSongTitle, ghostwriteNextLine, SongInput, LyricSegment, ExtractedProfile, AnalysisResult } from './services/geminiService';
 import Studio from './components/Studio';
 
 export interface LyricistProfile {
@@ -20,6 +20,7 @@ export default function App() {
   const [analyzeInputType, setAnalyzeInputType] = useState<'upload' | 'link'>('link');
   const [analyzeLink, setAnalyzeLink] = useState('');
   const [lyricsTheme, setLyricsTheme] = useState('');
+  const [extractedProfile, setExtractedProfile] = useState<ExtractedProfile | null>(null);
   const [lyricistPersonality, setLyricistPersonality] = useState('');
   const [profiles, setProfiles] = useState<LyricistProfile[]>([]);
   const [activeProfileId, setActiveProfileId] = useState<string>('');
@@ -27,13 +28,25 @@ export default function App() {
   const [newProfileName, setNewProfileName] = useState('');
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [currentAction, setCurrentAction] = useState<'analyze' | 'lyrics' | 'compare' | null>(null);
+  const [visualAnchor, setVisualAnchor] = useState('');
+  const [customStructure, setCustomStructure] = useState('');
+  const [injectVocalTags, setInjectVocalTags] = useState(false);
+  const [rhymeComplexity, setRhymeComplexity] = useState('default');
+  const [emotionalArc, setEmotionalArc] = useState('static');
+  const [instrumentalPacing, setInstrumentalPacing] = useState('default');
+  const [lockSyllables, setLockSyllables] = useState(false);
   const [generatedLyrics, setGeneratedLyrics] = useState<LyricSegment[] | null>(null);
+  const [lyricsPrompt, setLyricsPrompt] = useState<string | null>(null);
   const [songTitle, setSongTitle] = useState<string | null>(null);
   const [editingSegmentIndex, setEditingSegmentIndex] = useState<number | null>(null);
   const [segmentEditValue, setSegmentEditValue] = useState('');
   const [rewritingSegmentIndex, setRewritingSegmentIndex] = useState<number | null>(null);
   const [rewriteInstruction, setRewriteInstruction] = useState('');
+  const [rewriteOptions, setRewriteOptions] = useState<string[] | null>(null);
+  const [isGeneratingRewrite, setIsGeneratingRewrite] = useState(false);
   const [isGeneratingTitle, setIsGeneratingTitle] = useState(false);
+  const [isGhostwriting, setIsGhostwriting] = useState(false);
+  const [isBoothMode, setIsBoothMode] = useState(false);
 
   // Compare state
   const [compareSong1, setCompareSong1] = useState<SongInput | null>(null);
@@ -152,15 +165,45 @@ export default function App() {
     ...dropzoneConfig
   });
 
+  // Helper for syllable counting
+  const countSyllables = (word: string) => {
+    word = word.toLowerCase().replace(/[^a-z]/g, '');
+    if (!word) return 0;
+    if (word.length <= 3) return 1;
+    word = word.replace(/(?:[^laeiouy]es|ed|[^laeiouy]e)$/, '');
+    word = word.replace(/^y/, '');
+    const match = word.match(/[aeiouy]{1,2}/g);
+    return match ? match.length : 1;
+  };
+
+  const countLineSyllables = (line: string) => {
+    return line.split(/\s+/).reduce((acc, word) => acc + countSyllables(word), 0);
+  };
+
+  const handleGhostwriteContent = async (index: number) => {
+    setIsGhostwriting(true);
+    try {
+      const newLines = await ghostwriteNextLine(segmentEditValue, lyricsTheme.trim() || extractedProfile?.emotionalTone || 'A song', lyricistPersonality, rhymeComplexity);
+      const appendPrefix = segmentEditValue.endsWith('\n') ? '' : '\n';
+      setSegmentEditValue(segmentEditValue + appendPrefix + newLines);
+    } catch(e: any) {
+      setError(e.message || "Failed to ghostwrite next line.");
+    } finally {
+      setIsGhostwriting(false);
+    }
+  };
+
   const handleAnalyzeAction = async (action: 'analyze' | 'lyrics' | 'compare') => {
     setError(null);
     
-    if (action === 'analyze' || action === 'compare') {
+      if (action === 'analyze' || action === 'compare') {
       setResult(null);
       setGeneratedLyrics(null);
+      setLyricsPrompt(null);
       setSongTitle(null);
     } else if (action === 'lyrics') {
       setGeneratedLyrics(null);
+      setLyricsPrompt(null);
       setSongTitle(null);
       // Keep result intact so they can be viewed simultaneously
     }
@@ -176,58 +219,20 @@ export default function App() {
         }
         
         if (s) {
-          let analysis = "";
+          let analysisData: AnalysisResult;
           if (s.type === 'file') {
-            analysis = await analyzeAudioFile(s.file);
+            analysisData = await analyzeAudioFile(s.file);
           } else {
-            analysis = await analyzeSongLink(s.link);
+            analysisData = await analyzeSongLink(s.link);
           }
-          setResult(analysis);
+          setResult(analysisData.markdown);
+          setExtractedProfile(analysisData.profile);
 
-          // Auto-populate lyrics theme from analysis
-          const extractSectionRegex = (text: string, titleRegex: RegExp, stopRegex: RegExp) => {
-            const match = text.match(titleRegex);
-            if (!match) return null;
-            const start = match.index! + match[0].length;
-            const remainder = text.substring(start);
-            const stopMatch = remainder.match(stopRegex);
-            const content = stopMatch ? remainder.substring(0, stopMatch.index) : remainder;
-            return content.replace(/\*\*/g, '').trim();
-          };
-
-          let vocalText = extractSectionRegex(analysis, /(?:5\.\s*(?:\*\*)?)?Vocal Style(?:\*\*)?[^\n]*\n?/i, /\n\s*(?:6\.|Mood)/i);
-          let moodText = extractSectionRegex(analysis, /(?:6\.\s*(?:\*\*)?)?Mood (?:&|and) Vibe(?:\*\*)?[^\n]*\n?/i, /\n\s*(?:7\.|Production)/i);
-          
-          // Fallbacks just in case the numbers get jumbled
-          if (!vocalText) vocalText = extractSectionRegex(analysis, /Vocal Style.*?\n/i, /\n\s*(?:6\.|Mood)/i);
-          if (!moodText) moodText = extractSectionRegex(analysis, /Mood (?:&|and) Vibe.*?\n/i, /\n\s*(?:7\.|Production)/i);
-
-          const themeParts = [];
-          if (vocalText) themeParts.push(`Vocal Style: ${vocalText}`);
-          if (moodText) themeParts.push(`Mood & Vibe: ${moodText}`);
-          
           let extractedTheme = lyricsTheme;
-          if (themeParts.length > 0) {
-            extractedTheme = themeParts.join(' | ');
-            setLyricsTheme(extractedTheme);
-          }
-
-          // Auto-generate lyrics directly after analysis
-          if (extractedTheme) {
-            setCurrentAction('lyrics'); // Switch loading state
-
-            const generated = await generateLyrics(s, extractedTheme, lyricistPersonality);
-            setGeneratedLyrics(generated);
-            
-            setIsGeneratingTitle(true);
-            try {
-              const title = await suggestSongTitle(s, generated);
-              setSongTitle(title);
-            } catch (e) {
-              console.error("Failed to generate title", e);
-            } finally {
-              setIsGeneratingTitle(false);
-            }
+          // Auto-populate lyrics theme from extracted profile if empty
+          if (!extractedTheme && analysisData.profile && (analysisData.profile.emotionalTone || analysisData.profile.vocalPersona)) {
+             extractedTheme = `Vocal Persona: ${analysisData.profile.vocalPersona} | Tone: ${analysisData.profile.emotionalTone}`;
+             setLyricsTheme(extractedTheme);
           }
         } else {
           setError('Please provide a song to analyze.');
@@ -255,14 +260,15 @@ export default function App() {
           s = { type: 'link', link: analyzeLink.trim() };
         }
 
-        if (s && lyricsTheme.trim()) {
-          const lyrics = await generateLyrics(s, lyricsTheme.trim(), lyricistPersonality);
-          setGeneratedLyrics(lyrics);
+        if (s && (lyricsTheme.trim() || extractedProfile)) {
+          const lyrics = await generateLyrics(s, lyricsTheme.trim() || "A new song matching the core emotion", lyricistPersonality, extractedProfile || undefined, visualAnchor.trim() || undefined, customStructure.trim() || undefined, injectVocalTags, rhymeComplexity, emotionalArc, instrumentalPacing);
+          setGeneratedLyrics(lyrics.segments);
+          setLyricsPrompt(lyrics.prompt);
           
           // Automatically suggest title after lyrics generation
           setIsGeneratingTitle(true);
           try {
-            const title = await suggestSongTitle(s, lyrics);
+            const title = await suggestSongTitle(s, lyrics.segments);
             setSongTitle(title);
           } catch (e) {
             console.error("Failed to generate title", e);
@@ -290,12 +296,19 @@ export default function App() {
     setCompareLink1('');
     setCompareLink2('');
     setLyricsTheme('');
-    setLyricistPersonality('');
+    setVisualAnchor('');
+    setCustomStructure('');
+    setInjectVocalTags(false);
+    setRhymeComplexity('default');
+    setEmotionalArc('static');
+    setInstrumentalPacing('default');
     setResult(null);
     setGeneratedLyrics(null);
+    setLyricsPrompt(null);
     setSongTitle(null);
     setError(null);
     setCopiedId(null);
+    setRewriteOptions(null);
   };
 
   const handleCopy = (text: string, id: string) => {
@@ -322,29 +335,28 @@ export default function App() {
     }
     if (!s) return;
 
-    const originalText = generatedLyrics[index].text;
-    
-    // Optimistic UI update or loading state
-    const newLyrics = [...generatedLyrics];
-    newLyrics[index].text = "Rewriting...";
-    setGeneratedLyrics(newLyrics);
+    setIsGeneratingRewrite(true);
+    setRewriteOptions(null);
 
     try {
-      const newText = await rewriteLyricSegment(s, generatedLyrics, index, rewriteInstruction.trim(), lyricistPersonality);
-      const updatedLyrics = [...generatedLyrics];
-      updatedLyrics[index].text = newText;
-      setGeneratedLyrics(updatedLyrics);
+      const options = await rewriteLyricSegment(s, generatedLyrics, index, rewriteInstruction.trim(), lyricistPersonality, lockSyllables, rhymeComplexity);
+      setRewriteOptions(options);
     } catch (err) {
       console.error(err);
-      // Revert on error
-      const revertedLyrics = [...generatedLyrics];
-      revertedLyrics[index].text = originalText;
-      setGeneratedLyrics(revertedLyrics);
-      setError("Failed to rewrite segment.");
+      setError("Failed to generate rewrite options.");
     } finally {
-      setRewritingSegmentIndex(null);
-      setRewriteInstruction('');
+      setIsGeneratingRewrite(false);
     }
+  };
+
+  const commitRewriteOption = (index: number, chosenText: string) => {
+    if (!generatedLyrics) return;
+    const updatedLyrics = [...generatedLyrics];
+    updatedLyrics[index].text = chosenText;
+    setGeneratedLyrics(updatedLyrics);
+    setRewritingSegmentIndex(null);
+    setRewriteInstruction('');
+    setRewriteOptions(null);
   };
 
   const handleRegenerateTitle = async () => {
@@ -389,6 +401,10 @@ export default function App() {
   const handleDownloadYt = () => {
     if (!ytLink.trim()) return;
     window.location.href = `/api/youtube/download?url=${encodeURIComponent(ytLink.trim())}`;
+  };
+
+  const updateProfileField = (key: keyof ExtractedProfile, value: string) => {
+    setExtractedProfile(prev => prev ? { ...prev, [key]: value } : null);
   };
 
   const renderInputSelector = (
@@ -478,6 +494,7 @@ export default function App() {
   };
 
   return (
+    <>
     <div className="min-h-screen bg-zinc-950 text-zinc-50 font-sans selection:bg-indigo-500/30">
       {/* Header */}
       <header className="border-b border-zinc-800/50 bg-zinc-950/50 backdrop-blur-xl sticky top-0 z-50">
@@ -659,6 +676,110 @@ export default function App() {
                     className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-sm text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500 transition-all min-h-[100px] custom-scrollbar resize-y mt-2"
                   />
                 </div>
+                
+                {extractedProfile && (
+                  <motion.div
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: 'auto' }}
+                    className="space-y-4 border-t border-zinc-800/80 pt-6 mt-2"
+                  >
+                    <h3 className="text-sm font-semibold text-indigo-400 flex items-center gap-2">
+                      <Sparkles className="w-4 h-4" /> Step 2: Songwriter Profile (Tweakable)
+                    </h3>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-[11px] font-medium text-zinc-400 mb-1 uppercase tracking-wider">Vocal Persona</label>
+                        <input type="text" value={extractedProfile.vocalPersona} onChange={(e) => updateProfileField('vocalPersona', e.target.value)} className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-200 focus:outline-none focus:border-indigo-500 transition-colors" />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-medium text-zinc-400 mb-1 uppercase tracking-wider">Emotional Tone</label>
+                        <input type="text" value={extractedProfile.emotionalTone} onChange={(e) => updateProfileField('emotionalTone', e.target.value)} className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-200 focus:outline-none focus:border-indigo-500 transition-colors" />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-medium text-zinc-400 mb-1 uppercase tracking-wider">Relationship</label>
+                        <input type="text" value={extractedProfile.relationshipDynamic} onChange={(e) => updateProfileField('relationshipDynamic', e.target.value)} className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-200 focus:outline-none focus:border-indigo-500 transition-colors" />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-medium text-zinc-400 mb-1 uppercase tracking-wider">Lyrical Density</label>
+                        <input type="text" value={extractedProfile.lyricalDensity} onChange={(e) => updateProfileField('lyricalDensity', e.target.value)} className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-200 focus:outline-none focus:border-indigo-500 transition-colors" />
+                      </div>
+                    </div>
+                    
+                    <div className="space-y-3 pt-2">
+                      <div className="flex items-center gap-2">
+                        <input 
+                          type="checkbox" 
+                          id="injectVocalTags" 
+                          checked={injectVocalTags} 
+                          onChange={(e) => setInjectVocalTags(e.target.checked)}
+                          className="rounded bg-zinc-900 border-zinc-700 text-indigo-500 focus:ring-indigo-500/50 cursor-pointer"
+                        />
+                        <label htmlFor="injectVocalTags" className="text-xs text-zinc-300 cursor-pointer font-medium">Inject Audio Generator Tags (Suno/Udio braces & parentheses)</label>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-3 mt-2">
+                        <div>
+                          <label className="block text-xs font-medium text-zinc-300 mb-1">Rhyme Scheme</label>
+                          <select 
+                            value={rhymeComplexity} 
+                            onChange={(e) => setRhymeComplexity(e.target.value)}
+                            className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-2 py-2 text-sm text-zinc-200 focus:outline-none focus:border-indigo-500 transition-colors"
+                          >
+                            <option value="default">Default (Any)</option>
+                            <option value="slant">Modern / Slant Rhymes</option>
+                            <option value="multi">Complex / Multi-syllabic</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-zinc-300 mb-1">Emotional Arc</label>
+                          <select 
+                            value={emotionalArc} 
+                            onChange={(e) => setEmotionalArc(e.target.value)}
+                            className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-2 py-2 text-sm text-zinc-200 focus:outline-none focus:border-indigo-500 transition-colors"
+                          >
+                            <option value="static">Static / Vibe</option>
+                            <option value="downward">Downward Spiral (Gets darker)</option>
+                            <option value="realization">The Realization (Epiphany)</option>
+                            <option value="upward">Triumphant (Builds up)</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-zinc-300 mb-1">Instrumental Pacing</label>
+                          <select 
+                            value={instrumentalPacing} 
+                            onChange={(e) => setInstrumentalPacing(e.target.value)}
+                            className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-2 py-2 text-sm text-zinc-200 focus:outline-none focus:border-indigo-500 transition-colors"
+                          >
+                            <option value="default">Vocal-heavy (Default)</option>
+                            <option value="balanced">Balanced (Instrumental breaks)</option>
+                            <option value="cinematic">Cinematic / Spacious</option>
+                          </select>
+                        </div>
+                      </div>
+
+                      <div className="mt-2">
+                        <label className="block text-xs font-medium text-zinc-300 mb-1">Visual Anchor / Seed Object (Optional)</label>
+                        <input 
+                          type="text" 
+                          value={visualAnchor} 
+                          onChange={(e) => setVisualAnchor(e.target.value)} 
+                          placeholder="e.g., 'A cracked iPhone screen', 'A single red balloon'" 
+                          className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:border-indigo-500 transition-colors" 
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-zinc-300 mb-1">Structural Blueprint (Optional)</label>
+                        <input 
+                          type="text" 
+                          value={customStructure} 
+                          onChange={(e) => setCustomStructure(e.target.value)} 
+                          placeholder="e.g., '[Intro], [Verse 1], [Beat Drop], [Chorus]'" 
+                          className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:border-indigo-500 transition-colors font-mono" 
+                        />
+                      </div>
+                    </div>
+                  </motion.div>
+                )}
               </div>
 
               <div className={activeTab === 'compare' ? 'flex-1 flex flex-col justify-center gap-6' : 'hidden'}>
@@ -727,38 +848,65 @@ export default function App() {
               </div>
 
               {activeTab === 'analyze' && (
-                <div className="mt-6 flex gap-4">
-                  <button
-                    onClick={() => handleAnalyzeAction('analyze')}
-                    disabled={
-                      isAnalyzing || 
-                      (analyzeInputType === 'link' && !analyzeLink.trim()) || 
-                      (analyzeInputType === 'upload' && !analyzeSong)
-                    }
-                    className="flex-1 bg-zinc-800 hover:bg-zinc-700 text-white font-medium py-3 px-4 rounded-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-                  >
-                    {isAnalyzing && currentAction === 'analyze' ? (
-                      <><Loader2 className="w-5 h-5 animate-spin" /> Analyzing...</>
-                    ) : (
-                      <><Sparkles className="w-5 h-5" /> Analyze Song</>
-                    )}
-                  </button>
-                  <button
-                    onClick={() => handleAnalyzeAction('lyrics')}
-                    disabled={
-                      isAnalyzing || 
-                      !lyricsTheme.trim() ||
-                      (analyzeInputType === 'link' && !analyzeLink.trim()) || 
-                      (analyzeInputType === 'upload' && !analyzeSong)
-                    }
-                    className="flex-1 bg-indigo-600 hover:bg-indigo-500 text-white font-medium py-3 px-4 rounded-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-                  >
-                    {isAnalyzing && currentAction === 'lyrics' ? (
-                      <><Loader2 className="w-5 h-5 animate-spin" /> Generating...</>
-                    ) : (
-                      <><FileText className="w-5 h-5" /> Generate Lyrics</>
-                    )}
-                  </button>
+                <div className="mt-6 flex flex-col gap-3">
+                  {!extractedProfile ? (
+                    <button
+                      onClick={() => handleAnalyzeAction('analyze')}
+                      disabled={
+                        isAnalyzing || 
+                        (analyzeInputType === 'link' && !analyzeLink.trim()) || 
+                        (analyzeInputType === 'upload' && !analyzeSong)
+                      }
+                      className="w-full bg-zinc-800 hover:bg-zinc-700 text-white font-medium py-3 px-4 rounded-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                    >
+                      {isAnalyzing && currentAction === 'analyze' ? (
+                        <><Loader2 className="w-5 h-5 animate-spin" /> Analyzing...</>
+                      ) : (
+                        <><Sparkles className="w-5 h-5" /> Step 1: Extract Musical DNA</>
+                      )}
+                    </button>
+                  ) : (
+                    <div className="flex gap-4">
+                      <button
+                        onClick={() => handleAnalyzeAction('analyze')}
+                        disabled={
+                          isAnalyzing || 
+                          (analyzeInputType === 'link' && !analyzeLink.trim()) || 
+                          (analyzeInputType === 'upload' && !analyzeSong)
+                        }
+                        className="flex-[0.5] bg-zinc-800 hover:bg-zinc-700 text-white font-medium py-3 px-4 rounded-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                      >
+                        {isAnalyzing && currentAction === 'analyze' ? <Loader2 className="w-5 h-5 animate-spin" /> : <RefreshCw className="w-5 h-5" />}
+                        Re-Analyze
+                      </button>
+                      <button
+                        onClick={() => handleAnalyzeAction('lyrics')}
+                        disabled={
+                          isAnalyzing || 
+                          (!lyricsTheme.trim() && !extractedProfile)
+                        }
+                        className="flex-[1.5] bg-indigo-600 hover:bg-indigo-500 text-white font-medium py-3 px-4 rounded-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                      >
+                        {isAnalyzing && currentAction === 'lyrics' ? (
+                          <><Loader2 className="w-5 h-5 animate-spin" /> Generating...</>
+                        ) : (
+                          <><FileText className="w-5 h-5" /> Step 3: Generate Lyrics</>
+                        )}
+                      </button>
+                    </div>
+                  )}
+                  {extractedProfile && !lyricsTheme.trim() && (
+                     <button
+                        onClick={() => handleAnalyzeAction('lyrics')}
+                        disabled={
+                          isAnalyzing || 
+                          (analyzeInputType === 'link' && !analyzeLink.trim()) || 
+                          (analyzeInputType === 'upload' && !analyzeSong)
+                        }
+                        className="hidden" // Hiding the old secondary button since it's merged above
+                      >
+                      </button>
+                  )}
                 </div>
               )}
               {activeTab === 'compare' && (
@@ -858,6 +1006,31 @@ export default function App() {
 
                     {generatedLyrics && result && <div className="w-full h-px bg-zinc-800/50"></div>}
 
+                    {lyricsPrompt && (
+                      <motion.div
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        className="bg-zinc-950/80 border border-zinc-800/80 rounded-xl overflow-hidden"
+                      >
+                        <div className="px-4 py-3 border-b border-zinc-800 flex items-center justify-between bg-zinc-900/50">
+                          <p className="text-xs font-semibold text-zinc-400 uppercase tracking-wider flex items-center gap-2">
+                            <Wand2 className="w-3.5 h-3.5" /> Raw LLM Prompt Sent
+                          </p>
+                          <button
+                            onClick={() => handleCopy(lyricsPrompt, 'rawPrompt')}
+                            className="text-xs font-medium text-zinc-500 hover:text-indigo-400 transition-colors flex items-center gap-1.5"
+                          >
+                            {copiedId === 'rawPrompt' ? <><Check className="w-3 h-3 text-green-500" /> Copied</> : <><Copy className="w-3 h-3" /> Copy Prompt</>}
+                          </button>
+                        </div>
+                        <div className="p-4 overflow-x-auto">
+                          <pre className="text-[11px] text-zinc-500 font-mono whitespace-pre-wrap leading-relaxed">
+                            {lyricsPrompt}
+                          </pre>
+                        </div>
+                      </motion.div>
+                    )}
+
                     {generatedLyrics && (
                       <motion.div 
                         initial={{ opacity: 0 }}
@@ -899,7 +1072,23 @@ export default function App() {
 
                     <div className="space-y-4">
                       {Array.isArray(generatedLyrics) && generatedLyrics.length > 0 && (
-                        <div className="flex justify-end px-1">
+                        <div className="flex justify-end px-1 gap-2">
+                          <button
+                            onClick={() => {
+                              let musicPrompt = '';
+                              if (result) {
+                                const match = result.match(/\*\*(?:Music )?Generator Prompt(?:\*\*)?:?\s*([\s\S]*)$/i);
+                                musicPrompt = match ? match[1].trim() : result;
+                              }
+                              const text = generatedLyrics.map(s => `[${s.label}]\n${s.text}`).join('\n\n');
+                              const payload = musicPrompt ? `${musicPrompt}\n\n${text}` : text;
+                              handleCopy(payload, 'masterPayload');
+                            }}
+                            className="text-xs font-medium text-zinc-500 hover:text-indigo-400 transition-colors flex items-center gap-1.5"
+                          >
+                            {copiedId === 'masterPayload' ? <><Check className="w-3 h-3 text-green-500" /> Copied Payload</> : <><Copy className="w-3 h-3" /> Master Payload (Suno/Udio)</>}
+                          </button>
+                          <span className="text-zinc-800">|</span>
                           <button
                             onClick={() => {
                               const text = generatedLyrics.map(s => `[${s.label}]\n${s.text}`).join('\n\n');
@@ -907,7 +1096,14 @@ export default function App() {
                             }}
                             className="text-xs font-medium text-zinc-500 hover:text-indigo-400 transition-colors flex items-center gap-1.5"
                           >
-                            {copiedId === 'lyrics' ? <><Check className="w-3 h-3 text-green-500" /> Copied to clipboard</> : <><Copy className="w-3 h-3" /> Copy All Lyrics</>}
+                            {copiedId === 'lyrics' ? <><Check className="w-3 h-3 text-green-500" /> Copied to clipboard</> : <><Copy className="w-3 h-3" /> Copy Lyrics</>}
+                          </button>
+                          <span className="text-zinc-800">|</span>
+                          <button
+                            onClick={() => setIsBoothMode(true)}
+                            className="text-xs font-medium text-indigo-400 hover:text-indigo-300 transition-colors flex items-center gap-1.5 bg-indigo-500/10 px-2 py-1 rounded"
+                          >
+                            <Mic className="w-3 h-3" /> Enter Booth Mode
                           </button>
                         </div>
                       )}
@@ -949,19 +1145,29 @@ export default function App() {
                                   onChange={(e) => setSegmentEditValue(e.target.value)}
                                   className="w-full bg-zinc-950 border border-zinc-700 rounded-lg p-3 text-sm text-zinc-200 focus:outline-none focus:ring-1 focus:ring-indigo-500 min-h-[100px]"
                                 />
-                                <div className="flex justify-end gap-2">
-                                  <button 
-                                    onClick={() => setEditingSegmentIndex(null)}
-                                    className="px-3 py-1.5 text-xs font-medium text-zinc-400 hover:text-zinc-200 transition-colors"
+                                <div className="flex justify-between items-center mt-3 border-t border-zinc-800/80 pt-3">
+                                  <button
+                                    onClick={() => handleGhostwriteContent(index)}
+                                    disabled={isGhostwriting}
+                                    className="px-3 py-1.5 text-xs font-medium text-indigo-400 hover:text-indigo-300 bg-indigo-500/10 hover:bg-indigo-500/20 rounded-md transition-colors flex items-center gap-1.5 disabled:opacity-50"
                                   >
-                                    Cancel
+                                    {isGhostwriting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Wand2 className="w-3.5 h-3.5" />}
+                                    {isGhostwriting ? 'Writing...' : 'Continue The Thought'}
                                   </button>
-                                  <button 
-                                    onClick={() => handleSaveSegmentEdit(index)}
-                                    className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium rounded-md transition-colors flex items-center gap-1"
-                                  >
-                                    <Check className="w-3.5 h-3.5" /> Save
-                                  </button>
+                                  <div className="flex justify-end gap-2">
+                                    <button 
+                                      onClick={() => setEditingSegmentIndex(null)}
+                                      className="px-3 py-1.5 text-xs font-medium text-zinc-400 hover:text-zinc-200 transition-colors"
+                                    >
+                                      Cancel
+                                    </button>
+                                    <button 
+                                      onClick={() => handleSaveSegmentEdit(index)}
+                                      className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium rounded-md transition-colors flex items-center gap-1"
+                                    >
+                                      <Check className="w-3.5 h-3.5" /> Save
+                                    </button>
+                                  </div>
                                 </div>
                               </div>
                             ) : rewritingSegmentIndex === index ? (
@@ -978,6 +1184,16 @@ export default function App() {
                                     placeholder="e.g., 'Make it more melancholic' or 'Change the perspective to first person'"
                                     className="w-full bg-zinc-950 border border-zinc-700 rounded-md px-3 py-2 text-sm text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:ring-1 focus:ring-indigo-500 mb-3"
                                   />
+                                  <div className="flex items-center gap-2 mb-3">
+                                    <input 
+                                      type="checkbox" 
+                                      id="lockSyllables" 
+                                      checked={lockSyllables} 
+                                      onChange={(e) => setLockSyllables(e.target.checked)}
+                                      className="rounded bg-zinc-900 border-zinc-700 text-indigo-500 focus:ring-indigo-500/50 cursor-pointer"
+                                    />
+                                    <label htmlFor="lockSyllables" className="text-xs text-zinc-400 cursor-pointer">Lock Syllable Count (Match Rhythm)</label>
+                                  </div>
                                   <div className="flex justify-end gap-2">
                                     <button 
                                       onClick={() => setRewritingSegmentIndex(null)}
@@ -987,17 +1203,45 @@ export default function App() {
                                     </button>
                                     <button 
                                       onClick={() => handleRewriteSegment(index)}
-                                      disabled={!rewriteInstruction.trim()}
+                                      disabled={!rewriteInstruction.trim() || isGeneratingRewrite}
                                       className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium rounded-md transition-colors flex items-center gap-1 disabled:opacity-50"
                                     >
-                                      <Wand2 className="w-3.5 h-3.5" /> Rewrite
+                                      {isGeneratingRewrite ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Wand2 className="w-3.5 h-3.5" />} 
+                                      {isGeneratingRewrite ? 'Punching in...' : 'Punch In (3 Options)'}
                                     </button>
                                   </div>
+                                  
+                                  {rewriteOptions && (
+                                    <div className="mt-4 space-y-2 border-t border-indigo-500/20 pt-4">
+                                      <p className="text-xs text-indigo-300 font-medium mb-2">Select a version to commit:</p>
+                                      {rewriteOptions.map((opt, i) => (
+                                        <div 
+                                          key={i}
+                                          onClick={() => commitRewriteOption(index, opt)}
+                                          className="bg-zinc-950 border border-zinc-700 hover:border-indigo-500 p-3 rounded-lg cursor-pointer transition-all group relative"
+                                        >
+                                          <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                            <span className="bg-indigo-500 text-white text-[10px] uppercase font-bold px-1.5 py-0.5 rounded">Use This</span>
+                                          </div>
+                                          <p className="text-sm text-zinc-300 whitespace-pre-wrap font-mono relative z-10 pr-16">{opt}</p>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
                                 </div>
                               </div>
                             ) : (
                               <div className="whitespace-pre-wrap text-zinc-300 text-sm leading-relaxed">
-                                {segment.text}
+                                {segment.text.split('\n').map((line, i) => (
+                                  <div key={i} className="flex justify-between items-start group/line py-0.5">
+                                    <span>{line}</span>
+                                    {line.trim() && !line.startsWith('[') && !line.startsWith('(') && (
+                                      <span className="text-[10px] text-zinc-600 bg-zinc-800/40 px-1.5 py-0.5 rounded opacity-50 group-hover/line:opacity-100 transition-opacity select-none font-mono tracking-tighter" title="Syllable count">
+                                        {countLineSyllables(line)}
+                                      </span>
+                                    )}
+                                  </div>
+                                ))}
                               </div>
                             )}
                           </div>
@@ -1019,5 +1263,36 @@ export default function App() {
         </div>
       </main>
     </div>
+    
+    <AnimatePresence>
+      {isBoothMode && generatedLyrics && (
+        <motion.div 
+          initial={{ opacity: 0, y: 50 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: 50 }}
+          className="fixed inset-0 z-50 bg-zinc-950 overflow-y-auto flex flex-col items-center p-8 sm:p-24 pb-64"
+        >
+          <button 
+            onClick={() => setIsBoothMode(false)}
+            className="fixed top-8 right-8 p-4 bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-white rounded-full transition-colors z-[60] shadow-2xl"
+          >
+            <X className="w-8 h-8" />
+          </button>
+          
+          <div className="max-w-4xl w-full mx-auto space-y-24 pt-12 relative z-50">
+             {songTitle && <h1 className="text-zinc-500 font-bold text-2xl text-center mb-12 opacity-50">{songTitle}</h1>}
+            {generatedLyrics.map((seg, i) => (
+              <div key={i} className="text-center">
+                <div className="text-indigo-500 font-mono text-xl sm:text-2xl font-bold mb-8 uppercase tracking-[0.3em] opacity-80">{seg.label}</div>
+                <div className="text-zinc-100 text-4xl sm:text-5xl md:text-6xl font-black leading-tight sm:leading-snug whitespace-pre-wrap tracking-tight">
+                  {seg.text}
+                </div>
+              </div>
+            ))}
+          </div>
+        </motion.div>
+      )}
+    </AnimatePresence>
+    </>
   );
 }

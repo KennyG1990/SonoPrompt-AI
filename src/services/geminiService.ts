@@ -4,6 +4,18 @@ const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 export type SongInput = { type: 'file'; file: File } | { type: 'link'; link: string };
 
+export interface ExtractedProfile {
+  vocalPersona: string;
+  emotionalTone: string;
+  relationshipDynamic: string;
+  lyricalDensity: string;
+}
+
+export interface AnalysisResult {
+  markdown: string;
+  profile: ExtractedProfile;
+}
+
 async function getFileBase64(file: File): Promise<string> {
   return new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
@@ -17,7 +29,7 @@ async function getFileBase64(file: File): Promise<string> {
   });
 }
 
-export async function analyzeAudioFile(file: File): Promise<string> {
+export async function analyzeAudioFile(file: File): Promise<AnalysisResult> {
   const base64Data = await getFileBase64(file);
 
   const prompt = `You are an expert musicologist and AI music prompt engineer. Analyze this song in detail.
@@ -35,7 +47,10 @@ Finally, provide a highly optimized **Music Generator Prompt** (for tools like S
 
 Make this prompt highly comprehensive (up to about 1000 characters). You MUST include a combination of the general sonic summary, but crucially, include almost verbatim the "Mood & Vibe" portion, as well as the "Vocal Style" details. Structure it like so: "[comma-separated sonic summary/genres/production]. Atmosphere: [Mood & Vibe details]. Delivery/Timbre: [Vocal Style details]."
 
-CRITICAL: The final generator prompt MUST be LESS than 1000 characters in total length.`;
+CRITICAL RESPONSE FORMAT:
+You MUST return your response as a strict JSON object with exactly two keys:
+1. "markdown": A fully formatted markdown string containing your detailed 7-point musical analysis and the final Music Generator Prompt.
+2. "profile": A nested JSON object containing strictly the following string keys: "vocalPersona", "emotionalTone", "relationshipDynamic", "lyricalDensity". Do NOT include production terms here. Focus purely on psychological, vocal, and songwriting behaviors.`;
 
   const response = await ai.models.generateContent({
     model: "gemini-2.5-flash",
@@ -54,7 +69,19 @@ CRITICAL: The final generator prompt MUST be LESS than 1000 characters in total 
     },
   });
 
-  return response.text || "No analysis generated.";
+  try {
+    let jsonStr = response.text || "{}";
+    const jsonMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+    if (jsonMatch) jsonStr = jsonMatch[1];
+    const parsed = JSON.parse(jsonStr);
+    return {
+      markdown: parsed.markdown || "Analysis failed.",
+      profile: parsed.profile || { vocalPersona: "", emotionalTone: "", relationshipDynamic: "", lyricalDensity: "" }
+    };
+  } catch (e) {
+    console.error("Failed to parse JSON response:", e);
+    return { markdown: response.text || "Failed to parse analysis.", profile: { vocalPersona: "", emotionalTone: "", relationshipDynamic: "", lyricalDensity: "" } };
+  }
 }
 
 export async function compareSongs(song1: SongInput, song2: SongInput): Promise<string> {
@@ -113,7 +140,7 @@ Finally, provide a highly optimized **"Delta" Music Generator Prompt** (for tool
   return response.text || "No comparison generated.";
 }
 
-export async function analyzeSongLink(linkOrName: string): Promise<string> {
+export async function analyzeSongLink(linkOrName: string): Promise<AnalysisResult> {
   const prompt = `You are an expert musicologist and AI music prompt engineer. Analyze the song at this link or with this name: "${linkOrName}".
   
 CRITICAL INSTRUCTION: If a URL (like a YouTube or Spotify link) is provided, you MUST use the urlContext tool to read the page and identify the ACTUAL song title and artist. DO NOT guess or hallucinate the song based on the URL string alone. Once you have the correct song title and artist, use Google Search to find accurate information about its musical characteristics.
@@ -131,7 +158,10 @@ Finally, provide a highly optimized **Music Generator Prompt** (for tools like S
 
 Make this prompt highly comprehensive (up to about 1000 characters). You MUST include a combination of the general sonic summary, but crucially, include almost verbatim the "Mood & Vibe" portion, as well as the "Vocal Style" details. Structure it like so: "[comma-separated sonic summary/genres/production]. Atmosphere: [Mood & Vibe details]. Delivery/Timbre: [Vocal Style details]."
 
-CRITICAL: The final generator prompt MUST be LESS than 1000 characters in total length.`;
+CRITICAL RESPONSE FORMAT:
+You MUST return your response as a strict JSON object with exactly two keys:
+1. "markdown": A fully formatted markdown string containing your detailed 7-point musical analysis and the final Music Generator Prompt.
+2. "profile": A nested JSON object containing strictly the following string keys: "vocalPersona", "emotionalTone", "relationshipDynamic", "lyricalDensity". Do NOT include production terms here. Focus purely on psychological, vocal, and songwriting behaviors.`;
 
   const response = await ai.models.generateContent({
     model: "gemini-3-flash-preview",
@@ -141,7 +171,19 @@ CRITICAL: The final generator prompt MUST be LESS than 1000 characters in total 
     },
   });
 
-  return response.text || "No analysis generated.";
+  try {
+    let jsonStr = response.text || "{}";
+    const jsonMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+    if (jsonMatch) jsonStr = jsonMatch[1];
+    const parsed = JSON.parse(jsonStr);
+    return {
+      markdown: parsed.markdown || "Analysis failed.",
+      profile: parsed.profile || { vocalPersona: "", emotionalTone: "", relationshipDynamic: "", lyricalDensity: "" }
+    };
+  } catch (e) {
+    console.error("Failed to parse JSON response:", e);
+    return { markdown: response.text || "Failed to parse analysis.", profile: { vocalPersona: "", emotionalTone: "", relationshipDynamic: "", lyricalDensity: "" } };
+  }
 }
 
 export type LyricSegment = {
@@ -149,27 +191,66 @@ export type LyricSegment = {
   text: string;
 };
 
-export async function generateLyrics(song: SongInput, theme: string, personality?: string): Promise<LyricSegment[]> {
+export interface LyricsGenerationResult {
+  segments: LyricSegment[];
+  prompt: string;
+}
+
+export async function generateLyrics(
+  song: SongInput | null, 
+  theme: string, 
+  personality?: string, 
+  profile?: ExtractedProfile,
+  visualAnchor?: string,
+  customStructure?: string,
+  injectVocalTags?: boolean,
+  rhymeComplexity?: string,
+  emotionalArc?: string,
+  instrumentalPacing?: string
+): Promise<LyricsGenerationResult> {
   const parts: any[] = [];
   
-  let promptText = `You are an expert songwriter. Analyze the provided song to understand its structure, rhythm, and mood.
-Then, write original lyrics for a NEW song based on the following theme/mood: "${theme}".
+  let promptText = `You are an elite, visceral songwriter.
 
-${personality ? `CRITICAL LYRICIST PERSONALITY AND RULES:\n${personality}\n\nYou MUST strictly adhere to these rules when writing the lyrics.\n\n` : ''}CRITICAL INSTRUCTION: If a URL (like a YouTube or Spotify link) is provided as the Reference Song, you MUST use the urlContext tool to read the page and identify the ACTUAL song title and artist. DO NOT guess or hallucinate the song based on the URL string alone. Once you have the correct song title and artist, use Google Search to find accurate information about its structure and lyrics.
+CRITICAL DIRECTIVE REGARDING THE ATTACHED REFERENCE AUDIO:
+Use the attached audio STRICTLY for syllable counting, rhythmic mapping, and structural layout (Verse, Chorus, Bridge, etc.). 
+DO NOT adopt the narrative, imagery, or subject matter of the reference audio.
+DO NOT use musical, structural, or production terminology in the lyrics.
 
-The lyrics should match the structural style of the reference song (e.g., Verse, Chorus, Verse, Chorus, Bridge, Outro).
+NARRATIVE THEME / TOPIC:
+"${theme}"
+
+${profile ? `SONGWRITER PSYCHOLOGICAL PROFILE:
+- Vocal Persona: ${profile.vocalPersona}
+- Emotional Tone: ${profile.emotionalTone}
+- Relationship Dynamic: ${profile.relationshipDynamic}
+- Lyrical Density: ${profile.lyricalDensity}
+` : ''}
+${visualAnchor ? `CRITICAL INSTRUCTION: You must visually anchor the scene. The object or concept "[${visualAnchor}]" MUST be physically interacted with or explicitly described in the first verse to ground the song in reality.\n\n` : ''}
+${injectVocalTags ? `CRITICAL VOCAL TAGS: Strategically insert audio-generator meta-tags. Use parentheses for background vocals (like '(echo)') and brackets for delivery style changes (like '[Aggressive building vocal]', '[choir swells]', '(ad-lib: yeah!)').\n\n` : ''}
+${rhymeComplexity === 'slant' ? `CRITICAL RHYME SCHEME: DO NOT use simple perfect AABB rhymes (like fire/desire). You MUST use modern slant rhymes, vowel-matching (assonance), and internal rhyming. Avoid cliché pairings at all costs.\n\n` : rhymeComplexity === 'multi' ? `CRITICAL RHYME SCHEME: Write using complex, multi-syllabic rhyme schemes (e.g., matching 3-4 syllables at the end of lines). Use internal rhymes. DO NOT use generic perfect rhymes (AABB). Avoid cliché pairings.\n\n` : ''}
+${emotionalArc && emotionalArc !== 'static' ? `STORY ARC MANDATE: The lyrics must follow this emotional progression across the song structure: "${emotionalArc}". The first verse should start at the beginning of this arc, and the bridge/final chorus should reach the climax or resolution of this arc. Do not let the emotional tone remain flat.\n\n` : ''}
+${instrumentalPacing === 'balanced' ? `INSTRUMENTAL PACING: Inject standalone instrumental arrangement blocks (e.g., [Melancholy Piano Intro], [Beat Drop], [4-Bar Guitar Solo]) between verses and choruses to give the song room to breathe.\n\n` : instrumentalPacing === 'cinematic' ? `INSTRUMENTAL PACING: Create a highly cinematic, spacious arrangement. Liberally inject long instrumental breaks, dynamic shifts, and atmospheric build-ups (e.g., [Long Atmospheric Intro], [Sudden Silence], [Massive Orchestral Bridge]) between sparse vocal sections.\n\n` : ''}
+${personality ? `USER'S CUSTOM STRICT RULES & PERSONALITY:\n${personality}\n\nYou MUST strictly adhere to these rules.\n\n` : ''}CRITICAL INSTRUCTION: If a URL (like a YouTube or Spotify link) is provided as the Reference Song, you MUST use the urlContext tool to read the page and identify the ACTUAL song title and artist. DO NOT guess or hallucinate the song based on the URL string alone. Once you have the correct song title and artist, use Google Search to find accurate information about its structure and lyrics.
+
+${customStructure ? `CRITICAL INSTRUCTION FOR STRUCTURE:
+Do NOT invent your own structure or copy the reference song's structure. You MUST write lyrics that exactly fill these specific section tags, in this exact order:
+${customStructure}
+` : `The lyrics should match the structural style of the reference song (e.g., Verse, Chorus, Verse, Chorus, Bridge, Outro).`}
 Return the result as a JSON array of segments, where each segment has a "label" (e.g., "Verse 1", "Chorus") and "text" (the lyrics for that section).`;
 
-  if (song.type === 'link') {
-    promptText = `Reference Song: "${song.link}"\n\n` + promptText;
-  } else {
-    const base64Data = await getFileBase64(song.file);
-    parts.push({
-      inlineData: {
-        mimeType: song.file.type,
-        data: base64Data,
-      },
-    });
+  if (song) {
+    if (song.type === 'link') {
+      promptText = `Reference Song: "${song.link}"\n\n` + promptText;
+    } else {
+      const base64Data = await getFileBase64(song.file);
+      parts.push({
+        inlineData: {
+          mimeType: song.file.type,
+          data: base64Data,
+        },
+      });
+    }
   }
 
   parts.push({ text: promptText });
@@ -201,22 +282,22 @@ Return the result as a JSON array of segments, where each segment has a "label" 
     
     // Ensure we always return an array
     if (Array.isArray(parsed)) {
-      return parsed;
+      return { segments: parsed, prompt: promptText };
     } else if (parsed && typeof parsed === 'object') {
       // Model might wrap it in an object like { "lyrics": [...] } or { "segments": [...] }
-      if (Array.isArray(parsed.lyrics)) return parsed.lyrics;
-      if (Array.isArray(parsed.segments)) return parsed.segments;
-      if (Array.isArray(parsed.result)) return parsed.result;
+      if (Array.isArray(parsed.lyrics)) return { segments: parsed.lyrics, prompt: promptText };
+      if (Array.isArray(parsed.segments)) return { segments: parsed.segments, prompt: promptText };
+      if (Array.isArray(parsed.result)) return { segments: parsed.result, prompt: promptText };
       
       // If it's a single object with label/text, wrap it
-      if (parsed.label && parsed.text) return [parsed];
+      if (parsed.label && parsed.text) return { segments: [parsed], prompt: promptText };
     }
     
     console.warn("Unexpected JSON structure for lyrics:", parsed);
-    return [];
+    return { segments: [], prompt: promptText };
   } catch (e) {
     console.error("Failed to parse lyrics JSON", e);
-    return [];
+    return { segments: [], prompt: promptText };
   }
 }
 
@@ -296,12 +377,14 @@ Return the result STRICTLY as a JSON object with the keys: "title", "prompt", "s
 }
 
 export async function rewriteLyricSegment(
-  song: SongInput, 
+  song: SongInput | null, 
   fullLyrics: LyricSegment[], 
   segmentIndex: number, 
   instruction: string,
-  personality?: string
-): Promise<string> {
+  personality?: string,
+  lockSyllables: boolean = false,
+  rhymeComplexity?: string
+): Promise<string[]> {
   const parts: any[] = [];
   
   if (!fullLyrics || !Array.isArray(fullLyrics)) {
@@ -313,7 +396,7 @@ export async function rewriteLyricSegment(
 
   let promptText = `You are an expert songwriter. You are helping to rewrite a specific section of lyrics for a song.
 
-${personality ? `CRITICAL LYRICIST PERSONALITY AND RULES:\n${personality}\n\nYou MUST strictly adhere to these rules when writing the rewrite.\n\n` : ''}CRITICAL INSTRUCTION: If a URL (like a YouTube or Spotify link) is provided as the Reference Song, you MUST use the urlContext tool to read the page and identify the ACTUAL song title and artist. DO NOT guess or hallucinate the song based on the URL string alone. Once you have the correct song title and artist, use Google Search to find accurate information about its structure and lyrics.
+${personality ? `CRITICAL LYRICIST PERSONALITY AND RULES:\n${personality}\n\nYou MUST strictly adhere to these rules when writing the rewrite.\n\n` : ''}${lockSyllables ? `CRITICAL SYLLABLE LOCK INSTRUCTION: You MUST maintain the EXACT SAME rhythmic syllable count as the original text you are rewriting. Count the syllables of the original line and ensure your rewrite matches it perfectly, line by line.\n\n` : ''}${rhymeComplexity === 'slant' ? `CRITICAL RHYME SCHEME: Use modern slant rhymes, vowel-matching (assonance), and internal rhyming. Avoid cliché perfect pairings.\n\n` : rhymeComplexity === 'multi' ? `CRITICAL RHYME SCHEME: Write using complex, multi-syllabic rhyme schemes and internal rhymes. Avoid cliché perfect pairings.\n\n` : ''}CRITICAL INSTRUCTION: If a URL (like a YouTube or Spotify link) is provided as the Reference Song, you MUST use the urlContext tool to read the page and identify the ACTUAL song title and artist. DO NOT guess or hallucinate the song based on the URL string alone. Once you have the correct song title and artist, use Google Search to find accurate information about its structure and lyrics.
 
 Here are the full current lyrics for context:
 ${contextLyrics}
@@ -324,18 +407,23 @@ ${targetSegment.text}
 
 Instructions for the rewrite: "${instruction}"
 
-Return ONLY the rewritten text for this section. Do not include the label.`;
+Return EXACTLY a valid JSON array containing 3 distinct string options for the rewritten text. Option 1 should be Poetic/Lyrical, Option 2 should be Direct/Blunt, and Option 3 should be Metaphorical. 
+FORMAT EXACTLY LIKE THIS:
+["option 1 text goes here", "option 2 text goes here", "option 3 text goes here"]
+Do not include the segment label. Do not use markdown blocks for the JSON. Return ONLY the JSON array.`;
 
-  if (song.type === 'link') {
-    promptText = `Reference Song for musical context: "${song.link}"\n\n` + promptText;
-  } else {
-    const base64Data = await getFileBase64(song.file);
-    parts.push({
-      inlineData: {
-        mimeType: song.file.type,
-        data: base64Data,
-      },
-    });
+  if (song) {
+    if (song.type === 'link') {
+      promptText = `Reference Song for musical context: "${song.link}"\n\n` + promptText;
+    } else {
+      const base64Data = await getFileBase64(song.file);
+      parts.push({
+        inlineData: {
+          mimeType: song.file.type,
+          data: base64Data,
+        },
+      });
+    }
   }
 
   parts.push({ text: promptText });
@@ -356,7 +444,59 @@ Return ONLY the rewritten text for this section. Do not include the label.`;
     },
   });
 
-  return response.text?.trim() || targetSegment.text;
+  try {
+    let rawText = response.text?.trim() || "[]";
+    if (rawText.startsWith('```json')) rawText = rawText.replace(/```json\n?/, '');
+    if (rawText.startsWith('```')) rawText = rawText.replace(/```\n?/, '');
+    if (rawText.endsWith('```')) rawText = rawText.replace(/```$/, '');
+    
+    const parsed = JSON.parse(rawText.trim());
+    if (Array.isArray(parsed) && parsed.length > 0) {
+      return parsed;
+    }
+  } catch (e) {
+    console.error("Failed to parse rewrite options, returning raw text as one option", e);
+  }
+  
+  return [response.text?.trim() || targetSegment.text];
+}
+
+export async function ghostwriteNextLine(
+  currentText: string,
+  theme: string,
+  personality?: string,
+  rhymeComplexity?: string
+): Promise<string> {
+  let promptText = `You are a ghostwriter helping a songwriter finish a lyric segment.
+
+Current lyrics in progress:
+"""
+${currentText}
+"""
+
+Theme: ${theme}
+${personality ? `Personality rules: ${personality}\n` : ''}
+${rhymeComplexity === 'slant' ? `Use slant rhymes / assonance.` : rhymeComplexity === 'multi' ? `Use complex, multi-syllabic rhymes.` : ''}
+
+CRITICAL: Generate EXACTLY 1 or 2 new lines that seamlessly continue the thought, flow, style, and rhyme scheme. 
+Output ONLY the new lines. Do NOT rewrite the existing text. Do NOT include any intro or conversational filler.`;
+
+  const safetySettings: any = [
+    { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
+    { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_NONE' },
+    { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' },
+    { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' }
+  ];
+
+  const response = await ai.models.generateContent({
+    model: "gemini-3-flash-preview",
+    contents: { parts: [{ text: promptText }] },
+    config: {
+      safetySettings
+    },
+  });
+
+  return response.text?.trim() || "";
 }
 
 export async function suggestSongTitle(song: SongInput, fullLyrics: LyricSegment[]): Promise<string> {
