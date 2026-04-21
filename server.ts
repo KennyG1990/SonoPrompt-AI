@@ -3,6 +3,7 @@ import { createServer as createViteServer } from 'vite';
 import { Readable } from 'stream';
 import { google } from 'googleapis';
 import multer from 'multer';
+import * as playdl from 'play-dl';
 
 const upload = multer({ storage: multer.memoryStorage() });
 
@@ -122,12 +123,14 @@ async function startServer() {
 
   // Public Invidious API instances that act as proxies to bypass YouTube's datacenter blocks
   const INVIDIOUS_INSTANCES = [
-    'https://vid.puffyan.us',
-    'https://invidious.nerdvpn.de',
-    'https://invidious.slipfox.xyz',
+    'https://invidious.flokinet.to',
     'https://iv.melmac.space',
+    'https://invidious.nerdvpn.de',
+    'https://invidious.no-logs.com',
+    'https://inv.zzls.xyz',
+    'https://invidious.privacydev.net',
     'https://yewtu.be',
-    'https://invidious.fdn.fr'
+    'https://vid.puffyan.us'
   ];
 
   function extractVideoId(url: string) {
@@ -137,7 +140,10 @@ async function startServer() {
 
   async function getInvidiousInfo(videoId: string) {
     let lastError;
-    for (const instance of INVIDIOUS_INSTANCES) {
+    // Fisher-Yates shuffle instances to avoid hitting the same one first every time
+    const shuffled = [...INVIDIOUS_INSTANCES].sort(() => Math.random() - 0.5);
+    
+    for (const instance of shuffled) {
       try {
         const res = await fetch(`${instance}/api/v1/videos/${videoId}`);
         if (res.ok) {
@@ -198,9 +204,9 @@ async function startServer() {
         return res.status(400).send('Invalid YouTube URL');
       }
 
+      // Attempt 1: play-dl
       try {
-        const { stream } = require('play-dl');
-        const audioStream = await stream(url, { discordPlayerCompatibility: true });
+        const audioStream = await playdl.stream(url, { discordPlayerCompatibility: true });
         
         res.header('Content-Disposition', `attachment; filename="${videoId}.webm"`);
         res.header('Content-Type', 'audio/webm');
@@ -211,6 +217,7 @@ async function startServer() {
         console.warn('play-dl failed, falling back to Invidious', err);
       }
       
+      // Attempt 2: Invidious Proxying
       const { data: info, instance } = await getInvidiousInfo(videoId);
       
       const audioStreams = info.adaptiveFormats?.filter((f: any) => f.type.startsWith('audio/')) || [];
@@ -224,26 +231,39 @@ async function startServer() {
         bestAudio = audioStreams[0];
       }
 
-      const title = (info.title || 'audio').replace(/[^\w\s-]/gi, '_');
-      const extension = bestAudio.type.includes('mp4') ? 'm4a' : 'webm';
-
-      res.header('Content-Disposition', `attachment; filename="${title}.${extension}"`);
-      res.header('Content-Type', bestAudio.type.split(';')[0]);
-
-      // Invidious stream URLs might be relative or absolute
-      const streamUrl = bestAudio.url.startsWith('http') ? bestAudio.url : `${instance}${bestAudio.url}`;
-
+      // Try local proxying via Invidious instance (bypasses our datacenter IP block)
+      const streamUrl = `${instance}/latest_version?id=${videoId}&itag=${bestAudio.itag}&local=true`;
+      
       const streamRes = await fetch(streamUrl);
-      if (!streamRes.ok || !streamRes.body) {
-        throw new Error('Failed to fetch audio stream from proxy');
+      if (streamRes.ok && streamRes.body) {
+        const title = (info.title || 'audio').replace(/[^\w\s-]/gi, '_');
+        const extension = bestAudio.type.includes('mp4') ? 'm4a' : 'webm';
+        res.header('Content-Disposition', `attachment; filename="${title}.${extension}"`);
+        res.header('Content-Type', bestAudio.type.split(';')[0]);
+        
+        if (typeof Readable.fromWeb === 'function') {
+          Readable.fromWeb(streamRes.body as any).pipe(res);
+        } else {
+          const arrayBuffer = await streamRes.arrayBuffer();
+          res.send(Buffer.from(arrayBuffer));
+        }
+        return;
       }
 
-      if (typeof Readable.fromWeb === 'function') {
-        Readable.fromWeb(streamRes.body as any).pipe(res);
-      } else {
-        const arrayBuffer = await streamRes.arrayBuffer();
-        res.send(Buffer.from(arrayBuffer));
+      // Fallback: Direct Fetch (Likely to fail with 403 in many regions, but worth a try as last resort)
+      const directUrl = bestAudio.url.startsWith('http') ? bestAudio.url : `${instance}${bestAudio.url}`;
+      const directRes = await fetch(directUrl);
+      if (directRes.ok && directRes.body) {
+        if (typeof Readable.fromWeb === 'function') {
+          Readable.fromWeb(directRes.body as any).pipe(res);
+        } else {
+          const arrayBuffer = await directRes.arrayBuffer();
+          res.send(Buffer.from(arrayBuffer));
+        }
+        return;
       }
+
+      throw new Error('Failed to fetch audio stream from all possible Sources');
 
     } catch (error: any) {
       console.error('YouTube download error:', error);

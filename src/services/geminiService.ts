@@ -30,6 +30,14 @@ async function withRetry<T>(fn: () => Promise<T>, maxRetries = 3, initialDelay =
 
 export type SongInput = { type: 'file'; file: File } | { type: 'link'; link: string };
 
+export interface SonicDNA {
+  energy: number;
+  rhythmicComplexity: number;
+  emotionalDarkness: number;
+  vocalClarity: number;
+  productionPolish: number;
+}
+
 export interface ExtractedProfile {
   vocalPersona: string;
   emotionalTone: string;
@@ -39,6 +47,8 @@ export interface ExtractedProfile {
   sensoryPalette?: string;
   physicalMotif?: string;
   chorusBehavior?: string;
+  sonicDNA?: SonicDNA;
+  visualPrompt?: string;
 }
 
 export interface AnalysisResult {
@@ -145,10 +155,13 @@ Make this prompt highly comprehensive (up to about 1000 characters). You MUST in
 CRITICAL RESPONSE FORMAT:
 You MUST return your response as a strict JSON object with exactly two keys:
 1. "markdown": A fully formatted markdown string containing your detailed 7-point musical analysis and the final Music Generator Prompt.
-2. "profile": A nested JSON object containing strictly the following string keys: "vocalPersona", "emotionalTone", "relationshipDynamic", "lyricalDensity", "environment", "sensoryPalette", "physicalMotif", "chorusBehavior". Do NOT include production terms here. Focus purely on psychological, vocal, emotional flavor, environmental context, and songwriting behaviors.`;
+2. "profile": A nested JSON object containing strictly the following string keys: 
+   - "vocalPersona", "emotionalTone", "relationshipDynamic", "lyricalDensity", "environment", "sensoryPalette", "physicalMotif", "chorusBehavior" (Strings)
+   - "sonicDNA": { "energy": 0-100, "rhythmicComplexity": 0-100, "emotionalDarkness": 0-100, "vocalClarity": 0-100, "productionPolish": 0-100 }
+   - "visualPrompt": A descriptive 2-line prompt for an image generator like Midjourney or DALL-E that captures the song's "visual mood" and "sensory palette" (no artist names, just vibes and aesthetics).`;
 
   const response = await withRetry(() => ai.models.generateContent({
-    model: "gemini-3-flash-preview",
+    model: "gemini-3.1-pro-preview",
     contents: {
       parts: [
         {
@@ -161,6 +174,9 @@ You MUST return your response as a strict JSON object with exactly two keys:
           text: prompt,
         },
       ],
+    },
+    config: {
+      tools: [{ googleSearch: {} }],
     },
   }));
 
@@ -239,10 +255,12 @@ Finally, provide a highly optimized **"Delta" Music Generator Prompt** (for tool
   parts.push({ text: promptText });
 
   const response = await withRetry(() => ai.models.generateContent({
-    model: "gemini-3-flash-preview",
+    model: "gemini-3.1-pro-preview",
     contents: { parts },
     config: {
-      tools: [{ googleSearch: {} }],
+      tools: [
+        { googleSearch: {} },
+      ],
     },
   }));
 
@@ -273,7 +291,10 @@ Make this prompt highly comprehensive (up to about 1000 characters). You MUST in
 CRITICAL RESPONSE FORMAT:
 You MUST return your response as a strict JSON object with exactly two keys:
 1. "markdown": A fully formatted markdown string containing your detailed 7-point musical analysis and the final Music Generator Prompt.
-2. "profile": A nested JSON object containing strictly the following string keys: "vocalPersona", "emotionalTone", "relationshipDynamic", "lyricalDensity", "environment", "sensoryPalette", "physicalMotif", "chorusBehavior". Do NOT include production terms here. Focus purely on psychological, vocal, emotional flavor, environmental context, and songwriting behaviors.`;
+2. "profile": A nested JSON object containing strictly the following string keys: 
+   - "vocalPersona", "emotionalTone", "relationshipDynamic", "lyricalDensity", "environment", "sensoryPalette", "physicalMotif", "chorusBehavior" (Strings)
+   - "sonicDNA": { "energy": 0-100, "rhythmicComplexity": 0-100, "emotionalDarkness": 0-100, "vocalClarity": 0-100, "productionPolish": 0-100 }
+   - "visualPrompt": A descriptive 2-line prompt for an image generator like Midjourney or DALL-E that captures the song's "visual mood" and "sensory palette" (no artist names, just vibes and aesthetics).`;
 
   // Attempt to fetch actual audio so Gemini isn't operating blind
   let audioData: { data: string, mimeType: string } | null = null;
@@ -304,10 +325,9 @@ You MUST return your response as a strict JSON object with exactly two keys:
   }
 
   if (!audioData && isUrl) {
-    prompt = `WARNING FOR ASSISTANT: Due to technical restrictions, the physical audio file for this track could NOT be retrieved. You ONLY have the metadata: ${metadataAddition}.
+    prompt = `CONTEXT FOR ASSISTANT: The physical audio file for this track could NOT be retrieved due to technical connectivity limits. However, the user is expecting a HIGH-QUALITY, specific analysis of "${linkOrName}" (${metadataAddition}). 
     
-CRITICAL: Do NOT confidently guess or hallucinate highly specific instruments (like 'distorted cowbells') or vocal specifics (like 'Memphis rap samples') unless you explicitly know this exact track "${linkOrName}" perfectly from your pre-training data. 
-If this track is obscure or unknown to you, state clearly at the very beginning of the analysis: "*Note: Audio could not be analyzed directly. This is an estimated aesthetic profile based on genre expectations for this artist.*" and then keep the analysis generalized (e.g. 'Dark RnB/Trap textures' rather than 'detuned analog synths'). DO NOT act confident about things you haven't actually heard or do not know.\n\n` + prompt;
+You MUST use your internal training data and your Google Search tool to identify the specific instrumentation, tempo, and production nuances of this exact track. DO NOT be generic unless the song is truly obscure and you can't find information on it. Provide the same level of depth as if you were listening to it.\n\n` + prompt;
   }
 
   if (config.provider === 'openrouter') {
@@ -339,7 +359,7 @@ If this track is obscure or unknown to you, state clearly at the very beginning 
   contentsData.push(prompt);
 
   const response = await withRetry(() => ai.models.generateContent({
-    model: "gemini-3-flash-preview",
+    model: "gemini-3.1-pro-preview",
     contents: contentsData,
     config: {
       tools: [{ googleSearch: {} }],
@@ -460,7 +480,7 @@ Return the result as a JSON array of segments, where each segment has a "label" 
     { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' }
   ];
   const response = await withRetry(() => ai.models.generateContent({
-    model: "gemini-3-flash-preview",
+    model: "gemini-3.1-pro-preview",
     contents: { parts },
     config: {
       tools: [{ googleSearch: {} }],
@@ -553,9 +573,7 @@ Return the result STRICTLY as a JSON object with the keys: "title", "prompt", "s
     
     // If we couldn't get audio (either it failed, or we are using purely text-based OpenRouter)
     if (parts.length === 0) {
-      promptText = `WARNING FOR ASSISTANT: Due to technical restrictions, the physical audio file for this track could NOT be retrieved. You ONLY have the text metadata.
-      
-CRITICAL: Do NOT confidently guess or hallucinate highly specific instruments or vocal styles unless you explicitly know this exact track perfectly from your pre-training data. If this track is obscure or unknown to you, state clearly at the very beginning of the analysis: "*Note: Audio could not be analyzed directly. This is an estimated aesthetic profile based on genre expectations for this artist.*" and then keep the analysis generalized. DO NOT act confident about things you haven't actually heard.\n\n` + promptText;
+      promptText = `CONTEXT FOR ASSISTANT: The physical audio file for this track could NOT be retrieved. You must use your internal musicology knowledge and search tools to identify the specific production DNA of "${song.link}" (${meta}). Provide a high-fidelity analysis that isn't generic.\n\n` + promptText;
     }
 
   } else {
@@ -605,7 +623,7 @@ CRITICAL: Do NOT confidently guess or hallucinate highly specific instruments or
   ];
 
   const response = await withRetry(() => ai.models.generateContent({
-    model: "gemini-3-flash-preview",
+    model: "gemini-3.1-pro-preview",
     contents: { parts },
     config: {
       tools: [{ googleSearch: {} }],
@@ -721,7 +739,7 @@ Do not include the segment label. Do not use markdown blocks for the JSON. Retur
   ];
 
   const response = await withRetry(() => ai.models.generateContent({
-    model: "gemini-3-flash-preview",
+    model: "gemini-3.1-pro-preview",
     contents: { parts },
     config: {
       tools: [{ googleSearch: {} }],
@@ -779,7 +797,7 @@ Output ONLY the new sung lyrics. Do NOT include any meta-descriptions, stage dir
   ];
 
   const response = await withRetry(() => ai.models.generateContent({
-    model: "gemini-3-flash-preview",
+    model: "gemini-3.1-pro-preview",
     contents: { parts: [{ text: promptText }] },
     config: {
       safetySettings
@@ -836,7 +854,7 @@ Return ONLY the suggested title, without quotes or extra text.`;
   ];
 
   const response = await withRetry(() => ai.models.generateContent({
-    model: "gemini-3-flash-preview",
+    model: "gemini-3.1-pro-preview",
     contents: { parts },
     config: {
       tools: [{ googleSearch: {} }],
@@ -845,4 +863,35 @@ Return ONLY the suggested title, without quotes or extra text.`;
   }));
 
   return response.text?.trim().replace(/^["']|["']$/g, '') || "Untitled Song";
+}
+
+/**
+ * Generates a mood visual (album art) based on a descriptive prompt.
+ */
+export async function generateMoodVisual(prompt: string): Promise<string> {
+  const response = await ai.models.generateContent({
+    model: 'gemini-2.5-flash-image',
+    contents: {
+      parts: [
+        {
+          text: `Generate a high-fidelity, high-concept minimalist album art cover. 
+Description: ${prompt}
+Style: Professional music aesthetic, elegant composition, high resolution, 1K. 
+No text, no letters, no logos. Just the visual essence.`,
+        },
+      ],
+    },
+    config: {
+      imageConfig: {
+        aspectRatio: "1:1",
+      },
+    },
+  });
+
+  const part = response.candidates?.[0]?.content?.parts.find(p => p.inlineData);
+  if (part?.inlineData?.data) {
+    return `data:image/png;base64,${part.inlineData.data}`;
+  }
+
+  throw new Error("Failed to generate image.");
 }

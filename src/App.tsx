@@ -3,8 +3,9 @@ import { Upload, Link as LinkIcon, Music, Loader2, Sparkles, RefreshCw, AlertCir
 import { useDropzone } from 'react-dropzone';
 import ReactMarkdown from 'react-markdown';
 import { motion, AnimatePresence } from 'motion/react';
-import { analyzeAudioFile, analyzeSongLink, compareSongs, generateLyrics, rewriteLyricSegment, suggestSongTitle, ghostwriteNextLine, SongInput, LyricSegment, ExtractedProfile, AnalysisResult, AIConfig } from './services/geminiService';
+import { analyzeAudioFile, analyzeSongLink, compareSongs, generateLyrics, rewriteLyricSegment, suggestSongTitle, ghostwriteNextLine, generateMoodVisual, SongInput, LyricSegment, ExtractedProfile, AnalysisResult, AIConfig } from './services/geminiService';
 import Studio from './components/Studio';
+import SonicRadarChart from './components/SonicRadarChart';
 
 export interface LyricistProfile {
   id: string;
@@ -57,6 +58,8 @@ export default function App() {
   const [isGeneratingTitle, setIsGeneratingTitle] = useState(false);
   const [isGhostwriting, setIsGhostwriting] = useState(false);
   const [isBoothMode, setIsBoothMode] = useState(false);
+  const [moodVisualUrl, setMoodVisualUrl] = useState<string | null>(null);
+  const [isGeneratingMoodVisual, setIsGeneratingMoodVisual] = useState(false);
 
   // Compare state
   const [compareSong1, setCompareSong1] = useState<SongInput | null>(null);
@@ -373,6 +376,20 @@ export default function App() {
     }
   };
 
+  const handleGenerateVisual = async () => {
+    if (!extractedProfile?.visualPrompt) return;
+    setIsGeneratingMoodVisual(true);
+    setError(null);
+    try {
+      const url = await generateMoodVisual(extractedProfile.visualPrompt);
+      setMoodVisualUrl(url);
+    } catch (e: any) {
+      setError(e.message || "Failed to generate mood visual.");
+    } finally {
+      setIsGeneratingMoodVisual(false);
+    }
+  };
+
   const handleReset = () => {
     setAnalyzeSong(null);
     setAnalyzeLink('');
@@ -394,6 +411,8 @@ export default function App() {
     setError(null);
     setCopiedId(null);
     setRewriteOptions(null);
+    setMoodVisualUrl(null);
+    setExtractedProfile(null);
   };
 
   const handleCopy = (text: string, id: string) => {
@@ -1307,6 +1326,70 @@ export default function App() {
                           )}
                         </div>
                         <ReactMarkdown>{result}</ReactMarkdown>
+
+                        {extractedProfile?.sonicDNA && (
+                          <motion.div
+                            initial={{ opacity: 0, y: 20 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            className="mt-12 space-y-8"
+                          >
+                            <div className="flex flex-col md:flex-row gap-8 items-center">
+                              <div className="flex-1 w-full">
+                                <h3 className="text-sm font-bold text-indigo-400 uppercase tracking-widest mb-6 flex items-center gap-2">
+                                  <LayoutDashboard className="w-4 h-4" /> Sonic DNA Radar
+                                </h3>
+                                <SonicRadarChart data={extractedProfile.sonicDNA} />
+                              </div>
+                              
+                              <div className="flex-1 w-full space-y-6">
+                                <h3 className="text-sm font-bold text-indigo-400 uppercase tracking-widest mb-2 flex items-center gap-2">
+                                  <Sparkles className="w-4 h-4" /> Mood Visual (Album Art)
+                                </h3>
+                                
+                                {!moodVisualUrl ? (
+                                  <div className="aspect-square bg-zinc-950 border border-zinc-800 rounded-2xl flex flex-col items-center justify-center p-6 text-center group">
+                                    <div className="h-20 w-20 rounded-full bg-indigo-500/10 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
+                                      <Wand2 className="w-8 h-8 text-indigo-400" />
+                                    </div>
+                                    <p className="text-xs text-zinc-500 mb-6 italic">"{extractedProfile.visualPrompt}"</p>
+                                    <button
+                                      onClick={handleGenerateVisual}
+                                      disabled={isGeneratingMoodVisual}
+                                      className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-semibold py-3 px-4 rounded-xl transition-all shadow-lg shadow-indigo-500/20 flex items-center justify-center gap-2 disabled:opacity-50"
+                                    >
+                                      {isGeneratingMoodVisual ? (
+                                        <><Loader2 className="w-4 h-4 animate-spin" /> Rendering Mood...</>
+                                      ) : (
+                                        <><Sparkles className="w-4 h-4" /> Generate Album Art</>
+                                      )}
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <motion.div
+                                    initial={{ opacity: 0, scale: 0.9 }}
+                                    animate={{ opacity: 1, scale: 1 }}
+                                    className="relative group aspect-square rounded-2xl overflow-hidden border border-zinc-800 shadow-2xl"
+                                  >
+                                    <img src={moodVisualUrl} alt="Mood Visual" className="w-full h-full object-cover" />
+                                    <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center p-4">
+                                      <div className="text-center">
+                                        <button
+                                          onClick={() => handleCopy(moodVisualUrl, 'moodImg')}
+                                          className="bg-white text-black px-4 py-2 rounded-full text-xs font-bold transition-all shadow-xl hover:scale-105 active:scale-95"
+                                        >
+                                          {copiedId === 'moodImg' ? 'Copied URL!' : 'Share Visual'}
+                                        </button>
+                                        <p className="text-[10px] text-zinc-300 mt-4 px-4 line-clamp-3 italic opacity-80">
+                                          {extractedProfile.visualPrompt}
+                                        </p>
+                                      </div>
+                                    </div>
+                                  </motion.div>
+                                )}
+                              </div>
+                            </div>
+                          </motion.div>
+                        )}
                       </motion.div>
                     )}
 
