@@ -1,9 +1,9 @@
 import { useState, useCallback, useEffect } from 'react';
-import { Upload, Link as LinkIcon, Music, Loader2, Sparkles, RefreshCw, AlertCircle, GitCompare, X, FileText, Wand2, Edit3, Check, LayoutDashboard, Youtube, Download, Save, Trash2, Copy, Mic } from 'lucide-react';
+import { Upload, Link as LinkIcon, Music, Loader2, Sparkles, RefreshCw, AlertCircle, GitCompare, X, FileText, Wand2, Edit3, Check, LayoutDashboard, Youtube, Download, Save, Trash2, Copy, Mic, Settings, ExternalLink, ChevronDown, Search } from 'lucide-react';
 import { useDropzone } from 'react-dropzone';
 import ReactMarkdown from 'react-markdown';
 import { motion, AnimatePresence } from 'motion/react';
-import { analyzeAudioFile, analyzeSongLink, compareSongs, generateLyrics, rewriteLyricSegment, suggestSongTitle, ghostwriteNextLine, SongInput, LyricSegment, ExtractedProfile, AnalysisResult } from './services/geminiService';
+import { analyzeAudioFile, analyzeSongLink, compareSongs, generateLyrics, rewriteLyricSegment, suggestSongTitle, ghostwriteNextLine, SongInput, LyricSegment, ExtractedProfile, AnalysisResult, AIConfig } from './services/geminiService';
 import Studio from './components/Studio';
 
 export interface LyricistProfile {
@@ -14,6 +14,16 @@ export interface LyricistProfile {
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<'analyze' | 'compare' | 'studio' | 'youtube'>('analyze');
+  
+  // AI Configuration state
+  const [aiProvider, setAiProvider] = useState<'gemini' | 'openrouter'>('gemini');
+  const [openRouterKey, setOpenRouterKey] = useState('');
+  const [openRouterModel, setOpenRouterModel] = useState('auto'); // Legacy fallback
+  const [openRouterAnalysisModel, setOpenRouterAnalysisModel] = useState('auto');
+  const [openRouterCreativeModel, setOpenRouterCreativeModel] = useState('auto');
+  const [availableModels, setAvailableModels] = useState<any[]>([]);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isFetchingModels, setIsFetchingModels] = useState(false);
   
   // Analyze & Lyrics state
   const [analyzeSong, setAnalyzeSong] = useState<SongInput | null>(null);
@@ -75,11 +85,60 @@ export default function App() {
         console.error('Failed to parse profiles', e);
       }
     }
+
+    const savedSettings = localStorage.getItem('ai-settings');
+    if (savedSettings) {
+      try {
+        const settings = JSON.parse(savedSettings);
+        setAiProvider(settings.provider || 'gemini');
+        setOpenRouterKey(settings.openRouterKey || '');
+        setOpenRouterAnalysisModel(settings.openRouterAnalysisModel || settings.openRouterModel || 'auto');
+        setOpenRouterCreativeModel(settings.openRouterCreativeModel || settings.openRouterModel || 'auto');
+        setOpenRouterModel(settings.openRouterModel || 'auto'); // Keep just in case
+      } catch (e) {
+        console.error('Failed to parse settings', e);
+      }
+    }
   }, []);
 
   useEffect(() => {
     localStorage.setItem('lyricist-profiles', JSON.stringify(profiles));
   }, [profiles]);
+
+  useEffect(() => {
+    localStorage.setItem('ai-settings', JSON.stringify({
+      provider: aiProvider,
+      openRouterKey,
+      openRouterModel,
+      openRouterAnalysisModel,
+      openRouterCreativeModel
+    }));
+  }, [aiProvider, openRouterKey, openRouterModel, openRouterAnalysisModel, openRouterCreativeModel]);
+
+  const fetchOpenRouterModels = async () => {
+    setIsFetchingModels(true);
+    try {
+      const res = await fetch('/api/openrouter/models');
+      const data = await res.json();
+      if (data.data) {
+        // Sort models alphabetically
+        const sortedModels = data.data.sort((a: any, b: any) => a.name?.localeCompare(b.name));
+        setAvailableModels(sortedModels);
+      }
+    } catch (e) {
+      console.error('Failed to fetch models', e);
+    } finally {
+      setIsFetchingModels(false);
+    }
+  };
+
+  const currentAIConfig: AIConfig = {
+    provider: aiProvider,
+    openRouterKey: openRouterKey || undefined,
+    openRouterModel: openRouterModel || undefined,
+    openRouterAnalysisModel: openRouterAnalysisModel || undefined,
+    openRouterCreativeModel: openRouterCreativeModel || undefined
+  };
 
   const handleProfileSelect = (id: string) => {
     setActiveProfileId(id);
@@ -183,11 +242,21 @@ export default function App() {
   const handleGhostwriteContent = async (index: number) => {
     setIsGhostwriting(true);
     try {
-      const newLines = await ghostwriteNextLine(segmentEditValue, lyricsTheme.trim() || extractedProfile?.emotionalTone || 'A song', lyricistPersonality, rhymeComplexity);
+      const newLines = await ghostwriteNextLine(
+        segmentEditValue, 
+        lyricsTheme.trim() || extractedProfile?.emotionalTone || 'A song', 
+        lyricistPersonality, 
+        rhymeComplexity,
+        currentAIConfig
+      );
       const appendPrefix = segmentEditValue.endsWith('\n') ? '' : '\n';
       setSegmentEditValue(segmentEditValue + appendPrefix + newLines);
     } catch(e: any) {
-      setError(e.message || "Failed to ghostwrite next line.");
+      if (e.message?.includes('429')) {
+        setError('The Songwriter is currently overloaded. Please wait 60 seconds and try again. (Quota Exceeded)');
+      } else {
+        setError(e.message || "Failed to ghostwrite next line.");
+      }
     } finally {
       setIsGhostwriting(false);
     }
@@ -221,9 +290,9 @@ export default function App() {
         if (s) {
           let analysisData: AnalysisResult;
           if (s.type === 'file') {
-            analysisData = await analyzeAudioFile(s.file);
+            analysisData = await analyzeAudioFile(s.file, currentAIConfig);
           } else {
-            analysisData = await analyzeSongLink(s.link);
+            analysisData = await analyzeSongLink(s.link, currentAIConfig);
           }
           setResult(analysisData.markdown);
           setExtractedProfile(analysisData.profile);
@@ -249,7 +318,7 @@ export default function App() {
         }
 
         if (s1 && s2) {
-          const analysis = await compareSongs(s1, s2);
+          const analysis = await compareSongs(s1, s2, currentAIConfig);
           setResult(analysis);
         } else {
            setError('Please provide both songs to compare.');
@@ -261,14 +330,26 @@ export default function App() {
         }
 
         if (s && (lyricsTheme.trim() || extractedProfile)) {
-          const lyrics = await generateLyrics(s, lyricsTheme.trim() || "A new song matching the core emotion", lyricistPersonality, extractedProfile || undefined, visualAnchor.trim() || undefined, customStructure.trim() || undefined, injectVocalTags, rhymeComplexity, emotionalArc, instrumentalPacing);
+          const lyrics = await generateLyrics(
+            s, 
+            lyricsTheme.trim() || "A new song matching the core emotion", 
+            lyricistPersonality, 
+            extractedProfile || undefined, 
+            visualAnchor.trim() || undefined, 
+            customStructure.trim() || undefined, 
+            injectVocalTags, 
+            rhymeComplexity, 
+            emotionalArc, 
+            instrumentalPacing,
+            currentAIConfig
+          );
           setGeneratedLyrics(lyrics.segments);
           setLyricsPrompt(lyrics.prompt);
           
           // Automatically suggest title after lyrics generation
           setIsGeneratingTitle(true);
           try {
-            const title = await suggestSongTitle(s, lyrics.segments);
+            const title = await suggestSongTitle(s, lyrics.segments, currentAIConfig);
             setSongTitle(title);
           } catch (e) {
             console.error("Failed to generate title", e);
@@ -281,7 +362,11 @@ export default function App() {
       }
     } catch (err: any) {
       console.error(err);
-      setError(err.message || 'An error occurred.');
+      if (err.message?.includes('429')) {
+        setError('The Songwriter is currently overloaded. Please wait 60 seconds and try again. (Quota Exceeded)');
+      } else {
+        setError(err.message || 'An error occurred.');
+      }
     } finally {
       setIsAnalyzing(false);
       setCurrentAction(null);
@@ -339,11 +424,24 @@ export default function App() {
     setRewriteOptions(null);
 
     try {
-      const options = await rewriteLyricSegment(s, generatedLyrics, index, rewriteInstruction.trim(), lyricistPersonality, lockSyllables, rhymeComplexity);
+      const options = await rewriteLyricSegment(
+        s, 
+        generatedLyrics, 
+        index, 
+        rewriteInstruction.trim(), 
+        lyricistPersonality, 
+        lockSyllables, 
+        rhymeComplexity,
+        currentAIConfig
+      );
       setRewriteOptions(options);
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      setError("Failed to generate rewrite options.");
+      if (err.message?.includes('429')) {
+        setError('The Songwriter is currently overloaded. Please wait 60 seconds and try again. (Quota Exceeded)');
+      } else {
+        setError("Failed to generate rewrite options.");
+      }
     } finally {
       setIsGeneratingRewrite(false);
     }
@@ -369,7 +467,7 @@ export default function App() {
 
     setIsGeneratingTitle(true);
     try {
-      const title = await suggestSongTitle(s, generatedLyrics);
+      const title = await suggestSongTitle(s, generatedLyrics, currentAIConfig);
       setSongTitle(title);
     } catch (e) {
       console.error("Failed to generate title", e);
@@ -499,17 +597,204 @@ export default function App() {
       {/* Header */}
       <header className="border-b border-zinc-800/50 bg-zinc-950/50 backdrop-blur-xl sticky top-0 z-50">
         <div className="max-w-5xl mx-auto px-6 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-lg bg-indigo-500 flex items-center justify-center">
+          <div className="flex items-center gap-2 text-indigo-400 group cursor-pointer" onClick={() => handleReset()}>
+            <div className="w-8 h-8 rounded-lg bg-indigo-500 flex items-center justify-center group-hover:scale-110 transition-transform">
               <Sparkles className="w-5 h-5 text-white" />
             </div>
-            <span className="font-semibold text-lg tracking-tight">SonoPrompt AI</span>
+            <span className="font-semibold text-lg tracking-tight text-white">SonoPrompt AI</span>
           </div>
-          <a href="https://sonoteller.ai" target="_blank" rel="noreferrer" className="text-xs text-zinc-400 hover:text-zinc-200 transition-colors">
-            Inspired by Sonoteller
-          </a>
+
+          <div className="flex items-center gap-4">
+            <button
+              onClick={() => {
+                setIsSettingsOpen(true);
+                if (availableModels.length === 0) fetchOpenRouterModels();
+              }}
+              className="p-2 text-zinc-400 hover:text-white hover:bg-zinc-800 rounded-lg transition-colors flex items-center gap-2"
+              title="AI Settings"
+            >
+              <Settings className="w-4 h-4" />
+              <span className="text-xs font-medium hidden sm:inline">Settings</span>
+            </button>
+            <a href="https://sonoteller.ai" target="_blank" rel="noreferrer" className="text-xs text-zinc-400 hover:text-zinc-200 transition-colors hidden sm:block">
+              Inspired by Sonoteller
+            </a>
+          </div>
         </div>
       </header>
+
+      <AnimatePresence>
+        {isSettingsOpen && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 sm:p-6">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setIsSettingsOpen(false)}
+              className="absolute inset-0 bg-black/80 backdrop-blur-sm"
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="relative w-full max-w-lg bg-zinc-900 border border-zinc-800 rounded-2xl shadow-2xl overflow-hidden flex flex-col"
+            >
+              <div className="p-6 border-b border-zinc-800 flex items-center justify-between">
+                <div>
+                  <h2 className="text-xl font-semibold text-white">AI Configuration</h2>
+                  <p className="text-xs text-zinc-500 mt-1">Select your preferred AI provider and models.</p>
+                </div>
+                <button onClick={() => setIsSettingsOpen(false)} className="p-2 hover:bg-zinc-800 rounded-lg text-zinc-400 hover:text-white transition-colors">
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="p-6 space-y-6 overflow-y-auto max-h-[70vh] custom-scrollbar">
+                {/* Provider Toggle */}
+                <div>
+                  <label className="block text-xs font-medium text-zinc-500 uppercase tracking-wider mb-3">AI Provider</label>
+                  <div className="grid grid-cols-2 gap-3">
+                    <button
+                      onClick={() => setAiProvider('gemini')}
+                      className={`flex flex-col items-center gap-2 p-4 rounded-xl border-2 transition-all ${
+                        aiProvider === 'gemini' 
+                          ? 'border-indigo-500 bg-indigo-500/10 text-white' 
+                          : 'border-zinc-800 bg-zinc-950 text-zinc-500 hover:border-zinc-700'
+                      }`}
+                    >
+                      <Sparkles className={`w-6 h-6 ${aiProvider === 'gemini' ? 'text-indigo-400' : 'text-zinc-600'}`} />
+                      <span className="text-sm font-medium">Gemini API</span>
+                    </button>
+                    <button
+                      onClick={() => setAiProvider('openrouter')}
+                      className={`flex flex-col items-center gap-2 p-4 rounded-xl border-2 transition-all ${
+                        aiProvider === 'openrouter' 
+                          ? 'border-indigo-500 bg-indigo-500/10 text-white' 
+                          : 'border-zinc-800 bg-zinc-950 text-zinc-500 hover:border-zinc-700'
+                      }`}
+                    >
+                      <ExternalLink className={`w-6 h-6 ${aiProvider === 'openrouter' ? 'text-indigo-400' : 'text-zinc-600'}`} />
+                      <span className="text-sm font-medium">OpenRouter</span>
+                    </button>
+                  </div>
+                </div>
+
+                {aiProvider === 'openrouter' && (
+                  <motion.div
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="space-y-4"
+                  >
+                    <div>
+                      <label className="block text-xs font-medium text-zinc-500 uppercase tracking-wider mb-2">OpenRouter API Key</label>
+                      <input
+                        type="password"
+                        value={openRouterKey}
+                        onChange={(e) => setOpenRouterKey(e.target.value)}
+                        placeholder="sk-or-v1-..."
+                        className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-sm text-zinc-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/50"
+                      />
+                      <p className="text-[10px] text-zinc-600 mt-1.5 flex items-center gap-1">
+                        <AlertCircle className="w-3 h-3" /> Keys are stored locally in your browser.
+                      </p>
+                    </div>
+
+                    <div className="space-y-4">
+                      <div className="flex items-center justify-between mb-2">
+                        <label className="block text-xs font-medium text-zinc-500 uppercase tracking-wider">Model Selection</label>
+                        <button 
+                          onClick={fetchOpenRouterModels}
+                          disabled={isFetchingModels}
+                          className="text-[10px] text-indigo-400 hover:text-indigo-300 transition-colors flex items-center gap-1"
+                        >
+                          {isFetchingModels ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
+                          Refresh Models
+                        </button>
+                      </div>
+
+                      {/* Analysis Model */}
+                      <div>
+                        <label className="block text-xs font-medium text-zinc-400 mb-1">Analysis & Context Tasks</label>
+                        <p className="text-[10px] text-zinc-600 mb-2">Used for analyzing audio, parsing links, comparing songs, and structuring data.</p>
+                        <div className="relative group">
+                          <div className="absolute inset-y-0 left-3 flex items-center pointer-events-none text-zinc-500 group-focus-within:text-indigo-400 transition-colors">
+                            <Search className="w-4 h-4" />
+                          </div>
+                          <input
+                            list="openrouter-models"
+                            value={openRouterAnalysisModel}
+                            onChange={(e) => setOpenRouterAnalysisModel(e.target.value)}
+                            placeholder="auto (gemini-1.5-flash)"
+                            className="w-full bg-zinc-950 border border-zinc-800 rounded-xl pl-10 pr-10 py-3 text-sm text-zinc-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/50"
+                          />
+                          <div className="absolute inset-y-0 right-3 flex items-center pointer-events-none text-zinc-500">
+                            <ChevronDown className="w-4 h-4" />
+                          </div>
+                        </div>
+                        <p className="text-[10px] text-zinc-600 mt-1.5">
+                          Selected: <span className="text-zinc-400">{openRouterAnalysisModel === 'auto' ? 'google/gemini-1.5-flash' : openRouterAnalysisModel}</span>
+                        </p>
+                      </div>
+
+                      {/* Creative Model */}
+                      <div>
+                        <label className="block text-xs font-medium text-zinc-400 mb-1">Creative & Generative Tasks</label>
+                        <p className="text-[10px] text-zinc-600 mb-2">Used for writing lyrics, punch-in rewrites, ghostwriting, and titling.</p>
+                        <div className="relative group">
+                          <div className="absolute inset-y-0 left-3 flex items-center pointer-events-none text-zinc-500 group-focus-within:text-indigo-400 transition-colors">
+                            <Search className="w-4 h-4" />
+                          </div>
+                          <input
+                            list="openrouter-models"
+                            value={openRouterCreativeModel}
+                            onChange={(e) => setOpenRouterCreativeModel(e.target.value)}
+                            placeholder="auto (claude-3.7-sonnet)"
+                            className="w-full bg-zinc-950 border border-zinc-800 rounded-xl pl-10 pr-10 py-3 text-sm text-zinc-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/50"
+                          />
+                          <div className="absolute inset-y-0 right-3 flex items-center pointer-events-none text-zinc-500">
+                            <ChevronDown className="w-4 h-4" />
+                          </div>
+                        </div>
+                        <p className="text-[10px] text-zinc-600 mt-1.5">
+                          Selected: <span className="text-zinc-400">{openRouterCreativeModel === 'auto' ? 'anthropic/claude-3.7-sonnet' : openRouterCreativeModel}</span>
+                        </p>
+                      </div>
+
+                      <datalist id="openrouter-models">
+                        <option value="auto">Auto (Use default model for this task type)</option>
+                        {availableModels.map(m => (
+                          <option key={m.id} value={m.id}>{m.name || m.id}</option>
+                        ))}
+                      </datalist>
+                    </div>
+                  </motion.div>
+                )}
+
+                {aiProvider === 'gemini' && (
+                  <motion.div
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="p-4 bg-indigo-500/5 border border-indigo-500/20 rounded-xl"
+                  >
+                    <p className="text-sm text-indigo-300">
+                      Using the default <span className="font-semibold text-white">Gemini 1.5 Flash</span> models via the server backend.
+                    </p>
+                  </motion.div>
+                )}
+              </div>
+
+              <div className="p-6 bg-zinc-950/50 border-t border-zinc-800 flex justify-end">
+                <button
+                  onClick={() => setIsSettingsOpen(false)}
+                  className="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-sm font-semibold transition-all shadow-lg shadow-indigo-500/20"
+                >
+                  Apply Settings
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
       <main className="max-w-5xl mx-auto px-6 py-12">
         <div className="text-center mb-12">
@@ -571,7 +856,7 @@ export default function App() {
         </div>
 
         <div className={activeTab === 'studio' ? "block -mx-6 lg:mx-0 h-[calc(100vh-140px)]" : "hidden"}>
-          <Studio />
+          <Studio aiConfig={currentAIConfig} />
         </div>
 
         <div className={activeTab !== 'studio' ? "grid grid-cols-1 lg:grid-cols-12 gap-8" : "hidden"}>
@@ -692,7 +977,7 @@ export default function App() {
                         <input type="text" value={extractedProfile.vocalPersona} onChange={(e) => updateProfileField('vocalPersona', e.target.value)} className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-200 focus:outline-none focus:border-indigo-500 transition-colors" />
                       </div>
                       <div>
-                        <label className="block text-[11px] font-medium text-zinc-400 mb-1 uppercase tracking-wider">Emotional Tone</label>
+                        <label className="block text-[11px] font-medium text-zinc-400 mb-1 uppercase tracking-wider">Emotional Flavor / Tone</label>
                         <input type="text" value={extractedProfile.emotionalTone} onChange={(e) => updateProfileField('emotionalTone', e.target.value)} className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-200 focus:outline-none focus:border-indigo-500 transition-colors" />
                       </div>
                       <div>
@@ -706,6 +991,27 @@ export default function App() {
                     </div>
                     
                     <div className="space-y-3 pt-2">
+                      <div>
+                        <label className="block text-[11px] font-medium text-zinc-400 mb-1 uppercase tracking-wider">Environment / Setting</label>
+                        <input type="text" value={extractedProfile.environment || ''} onChange={(e) => updateProfileField('environment', e.target.value)} placeholder="e.g., A dimly lit elevator stalled between floors" className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-200 focus:outline-none focus:border-indigo-500 transition-colors" />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-medium text-zinc-400 mb-1 uppercase tracking-wider">Sensory Palette</label>
+                        <input type="text" value={extractedProfile.sensoryPalette || ''} onChange={(e) => updateProfileField('sensoryPalette', e.target.value)} placeholder="e.g., Cold steel, expensive cologne, sweat-damp silk" className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-200 focus:outline-none focus:border-indigo-500 transition-colors" />
+                      </div>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-[11px] font-medium text-zinc-400 mb-1 uppercase tracking-wider">Physical Motif</label>
+                          <input type="text" value={extractedProfile.physicalMotif || ''} onChange={(e) => updateProfileField('physicalMotif', e.target.value)} placeholder="e.g., Heat of a palm on the small of the back" className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-200 focus:outline-none focus:border-indigo-500 transition-colors" />
+                        </div>
+                        <div>
+                          <label className="block text-[11px] font-medium text-zinc-400 mb-1 uppercase tracking-wider">Chorus Behavior</label>
+                          <input type="text" value={extractedProfile.chorusBehavior || ''} onChange={(e) => updateProfileField('chorusBehavior', e.target.value)} placeholder="e.g., A rhythmic, whispered surrender" className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-200 focus:outline-none focus:border-indigo-500 transition-colors" />
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="space-y-3 pt-4 border-t border-zinc-800/80">
                       <div className="flex items-center gap-2">
                         <input 
                           type="checkbox" 

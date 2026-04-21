@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { Play, Pause, Upload, Youtube, Plus, Music, FileText, Trash2, Loader2, CheckCircle2, Wand2, Link as LinkIcon, Sparkles, Download } from 'lucide-react';
 import { useDropzone } from 'react-dropzone';
-import { analyzeAndGenerateStudioTrack, SongInput } from '../services/geminiService';
+import { analyzeAndGenerateStudioTrack, SongInput, AIConfig } from '../services/geminiService';
 
 export type Track = {
   id: string;
@@ -17,7 +17,7 @@ export type Track = {
   analysis?: string;
 };
 
-export default function Studio() {
+export default function Studio({ aiConfig }: { aiConfig?: AIConfig }) {
   const [tracks, setTracks] = useState<Track[]>([]);
   const [selectedTrackId, setSelectedTrackId] = useState<string | null>(null);
   
@@ -63,7 +63,7 @@ export default function Studio() {
 
     setIsAutoGenerating(true);
     try {
-      const result = await analyzeAndGenerateStudioTrack(songInput);
+      const result = await analyzeAndGenerateStudioTrack(songInput, aiConfig);
       setTitle(result.title);
       setDescription(result.prompt);
       setStyleTags(result.styleTags);

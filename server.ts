@@ -161,6 +161,22 @@ async function startServer() {
         return res.status(400).json({ error: 'Invalid YouTube URL' });
       }
       
+      // Attempt 1: Fetch from official oEmbed for metadata (more reliable than Invidious instances)
+      try {
+        const oembedUrl = `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`;
+        const oembedRes = await fetch(oembedUrl);
+        if (oembedRes.ok) {
+          const oembedData = await oembedRes.json();
+          return res.json({
+            title: oembedData.title,
+            thumbnail: oembedData.thumbnail_url || `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
+            author: oembedData.author_name,
+          });
+        }
+      } catch (e) {
+        console.warn('oEmbed fetch failed, falling back to Invidious', e);
+      }
+
       const { data: info } = await getInvidiousInfo(videoId);
       
       res.json({
@@ -180,6 +196,19 @@ async function startServer() {
       const videoId = extractVideoId(url);
       if (!videoId) {
         return res.status(400).send('Invalid YouTube URL');
+      }
+
+      try {
+        const { stream } = require('play-dl');
+        const audioStream = await stream(url, { discordPlayerCompatibility: true });
+        
+        res.header('Content-Disposition', `attachment; filename="${videoId}.webm"`);
+        res.header('Content-Type', 'audio/webm');
+        
+        audioStream.stream.pipe(res);
+        return;
+      } catch (err) {
+        console.warn('play-dl failed, falling back to Invidious', err);
       }
       
       const { data: info, instance } = await getInvidiousInfo(videoId);
@@ -301,6 +330,54 @@ async function startServer() {
     } catch (error: any) {
       console.error('Sonauto status error:', error);
       res.status(500).json({ error: error.message || 'Failed to check status' });
+    }
+  });
+
+  // OpenRouter Proxy
+  app.post('/api/openrouter/generate', async (req, res) => {
+    try {
+      const { prompt, model, apiKey: userApiKey } = req.body;
+      const apiKey = userApiKey || process.env.OPENROUTER_API_KEY;
+      
+      if (!apiKey) {
+        return res.status(400).json({ error: 'OpenRouter API Key is required. Please provide it in settings or environment.' });
+      }
+
+      const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`,
+          'HTTP-Referer': process.env.APP_URL || 'https://ai.studio',
+          'X-Title': 'SonoPrompt AI'
+        },
+        body: JSON.stringify({
+          model: model || 'openai/gpt-3.5-turbo',
+          messages: [{ role: 'user', content: prompt }]
+        })
+      });
+
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(`OpenRouter API error: ${text}`);
+      }
+
+      const data = await response.json();
+      res.json(data);
+    } catch (error: any) {
+      console.error('OpenRouter proxy error:', error);
+      res.status(500).json({ error: error.message || 'Failed to generate via OpenRouter' });
+    }
+  });
+
+  app.get('/api/openrouter/models', async (req, res) => {
+    try {
+      const response = await fetch('https://openrouter.ai/api/v1/models');
+      const data = await response.json();
+      res.json(data);
+    } catch (error: any) {
+      console.error('Failed to fetch OpenRouter models:', error);
+      res.status(500).json({ error: 'Failed to fetch models' });
     }
   });
 
