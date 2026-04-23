@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect } from 'react';
-import { Upload, Link as LinkIcon, Music, Loader2, Sparkles, RefreshCw, AlertCircle, GitCompare, X, FileText, Wand2, Edit3, Check, LayoutDashboard, Youtube, Download, Save, Trash2, Copy, Mic, Settings, ExternalLink, ChevronDown, Search } from 'lucide-react';
+import { Upload, Link as LinkIcon, Music, Loader2, Sparkles, RefreshCw, AlertCircle, GitCompare, X, FileText, Wand2, Edit3, Check, LayoutDashboard, Youtube, Download, Save, Trash2, Copy, Mic, Settings, ExternalLink, ChevronDown, Search, Plus, Settings2, Library, Activity, Monitor } from 'lucide-react';
 import { useDropzone } from 'react-dropzone';
 import ReactMarkdown from 'react-markdown';
 import { motion, AnimatePresence } from 'motion/react';
@@ -495,6 +495,8 @@ export default function App() {
     }
   };
 
+  const [isExpertSettingsOpen, setIsExpertSettingsOpen] = useState(false);
+
   const handleFetchYtInfo = async () => {
     if (!ytLink.trim()) return;
     setIsFetchingYt(true);
@@ -612,31 +614,46 @@ export default function App() {
 
   return (
     <>
-    <div className="min-h-screen bg-zinc-950 text-zinc-50 font-sans selection:bg-indigo-500/30">
+    <div className="min-h-screen bg-zinc-950 text-zinc-50 font-sans selection:bg-indigo-500/30 overflow-x-hidden">
+      {/* Background Decor */}
+      <div className="fixed inset-0 pointer-events-none overflow-hidden z-0">
+        <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-indigo-500/10 rounded-full blur-[120px] animate-pulse" />
+        <div className="absolute bottom-[-10%] right-[-10%] w-[35%] h-[35%] bg-purple-500/10 rounded-full blur-[120px] transition-all duration-1000" />
+        <div className="absolute inset-0 bg-noise opacity-[0.03] mix-blend-overlay" />
+      </div>
+
       {/* Header */}
-      <header className="border-b border-zinc-800/50 bg-zinc-950/50 backdrop-blur-xl sticky top-0 z-50">
-        <div className="max-w-5xl mx-auto px-6 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-2 text-indigo-400 group cursor-pointer" onClick={() => handleReset()}>
-            <div className="w-8 h-8 rounded-lg bg-indigo-500 flex items-center justify-center group-hover:scale-110 transition-transform">
-              <Sparkles className="w-5 h-5 text-white" />
+      <header className="sticky top-0 z-50 glass-card border-b border-white/[0.03]">
+        <div className="max-w-[1440px] mx-auto px-6 h-20 flex items-center justify-between">
+          <div className="flex items-center gap-3 cursor-pointer group" onClick={() => handleReset()}>
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-indigo-600 to-violet-500 flex items-center justify-center shadow-lg shadow-indigo-500/20 group-hover:scale-105 transition-transform rotate-2">
+              <Sparkles className="w-6 h-6 text-white" />
             </div>
-            <span className="font-semibold text-lg tracking-tight text-white">SonoPrompt AI</span>
+            <div>
+              <h1 className="text-xl font-bold tracking-tight text-white flex items-center gap-2">
+                SonoPrompt <span className="text-indigo-400 font-black text-[10px] bg-indigo-500/10 px-2 py-0.5 rounded-full tracking-widest uppercase">Elite</span>
+              </h1>
+              <p className="text-[10px] text-zinc-600 font-black uppercase tracking-[0.2em] -mt-1">Creative AI Engine</p>
+            </div>
           </div>
 
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-6">
             <button
               onClick={() => {
                 setIsSettingsOpen(true);
                 if (availableModels.length === 0) fetchOpenRouterModels();
               }}
-              className="p-2 text-zinc-400 hover:text-white hover:bg-zinc-800 rounded-lg transition-colors flex items-center gap-2"
+              className="p-2 text-zinc-400 hover:text-white transition-colors flex items-center gap-2 group"
               title="AI Settings"
             >
-              <Settings className="w-4 h-4" />
-              <span className="text-xs font-medium hidden sm:inline">Settings</span>
+              <div className="w-8 h-8 rounded-lg bg-zinc-900 flex items-center justify-center group-hover:bg-zinc-800 transition-colors">
+                <Settings className="w-4 h-4" />
+              </div>
+              <span className="text-xs font-bold uppercase tracking-widest hidden sm:inline">Settings</span>
             </button>
-            <a href="https://sonoteller.ai" target="_blank" rel="noreferrer" className="text-xs text-zinc-400 hover:text-zinc-200 transition-colors hidden sm:block">
-              Inspired by Sonoteller
+            <div className="h-8 w-[1px] bg-zinc-800 hidden sm:block"></div>
+            <a href="https://sonoteller.ai" target="_blank" rel="noreferrer" className="text-[10px] font-black uppercase tracking-widest text-zinc-500 hover:text-zinc-300 transition-colors hidden sm:block">
+              V.0.4.2
             </a>
           </div>
         </div>
@@ -815,13 +832,14 @@ export default function App() {
         )}
       </AnimatePresence>
 
-      <main className="max-w-5xl mx-auto px-6 py-12">
-        <div className="text-center mb-12">
-          <h1 className="text-4xl md:text-5xl font-bold tracking-tight mb-4">
-            Decode the DNA of any song.
+      <main className="max-w-[1440px] mx-auto px-6 py-16">
+        <div className="text-center mb-16 relative">
+          <div className="absolute -top-12 left-1/2 -translate-x-1/2 w-48 h-48 bg-indigo-500/20 rounded-full blur-[80px]" />
+          <h1 className="text-5xl md:text-7xl font-black tracking-tight mb-6 bg-gradient-to-b from-white to-zinc-500 bg-clip-text text-transparent leading-tight">
+            Decode the Sonic DNA <br /> of any master record.
           </h1>
-          <p className="text-zinc-400 text-lg max-w-2xl mx-auto">
-            Upload an audio file, paste a link, compare two songs, or generate lyrics based on a song's structure.
+          <p className="text-zinc-500 text-lg md:text-xl max-w-2xl mx-auto font-medium">
+            Analyze structures, extract vocal personas, and transform references into refined creative prompts.
           </p>
         </div>
 
@@ -878,11 +896,11 @@ export default function App() {
           <Studio aiConfig={currentAIConfig} />
         </div>
 
-        <div className={activeTab !== 'studio' ? "grid grid-cols-1 lg:grid-cols-12 gap-8" : "hidden"}>
+        <div className={activeTab !== 'studio' ? "grid grid-cols-1 lg:grid-cols-12 gap-12" : "hidden"}>
           {/* Input Section */}
-          <div className="lg:col-span-5 space-y-6">
-            <div className="bg-zinc-900/50 border border-zinc-800 rounded-2xl p-6 min-h-[300px] flex flex-col">
-              <div className={activeTab === 'analyze' ? 'flex-1 flex flex-col justify-center gap-6' : 'hidden'}>
+          <div className="lg:col-span-4 space-y-8">
+            <div className="bg-zinc-900/40 border border-white/[0.03] rounded-[32px] p-8 min-h-[300px] flex flex-col shadow-2xl glass-card">
+              <div className={activeTab === 'analyze' ? 'flex-1 flex flex-col justify-center gap-8' : 'hidden'}>
                 {renderInputSelector(
                   "Song (Upload or Link)", analyzeSong, analyzeInputType, setAnalyzeInputType, analyzeLink, setAnalyzeLink,
                   getRootPropsAnalyze, getInputPropsAnalyze, isDragActiveAnalyze, () => setAnalyzeSong(null)
@@ -902,208 +920,211 @@ export default function App() {
                   />
                 </div>
                 <div className="space-y-4">
-                  <div className="flex items-center justify-between">
-                    <label htmlFor="lyricist-personality" className="block text-sm font-medium text-zinc-300">
-                      Lyricist Personality & Rules (Optional)
+                  <div className="flex items-center justify-between mb-2">
+                    <label htmlFor="lyricist-personality" className="text-xs font-bold text-zinc-500 uppercase tracking-widest flex items-center gap-2">
+                      <LayoutDashboard className="w-4 h-4" /> Lyricist Style Engine
                     </label>
-                    <div className="flex items-center gap-2">
-                      <select
-                        value={activeProfileId}
-                        onChange={(e) => handleProfileSelect(e.target.value)}
-                        className="bg-zinc-950 border border-zinc-700 text-xs text-zinc-300 rounded-md px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                      >
-                        <option value="">-- Custom / None --</option>
-                        {profiles.map(p => (
-                          <option key={p.id} value={p.id}>{p.name}</option>
-                        ))}
-                      </select>
-
-                      {activeProfileId ? (
-                        <button
-                          onClick={handleDeleteProfile}
-                          className="p-1 text-zinc-500 hover:text-red-400 hover:bg-zinc-800 rounded transition-colors"
-                          title="Delete Profile"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      ) : (
-                        <button
-                          onClick={() => setIsSavingProfile(true)}
-                          className="p-1 text-zinc-500 hover:text-indigo-400 hover:bg-zinc-800 rounded transition-colors disabled:opacity-50"
-                          title="Save as Profile"
-                          disabled={!lyricistPersonality.trim()}
-                        >
-                          <Save className="w-4 h-4" />
-                        </button>
-                      )}
-                    </div>
                   </div>
-
-                  {isSavingProfile && (
-                    <motion.div
-                      initial={{ opacity: 0, y: -10 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      className="flex items-center gap-2 bg-zinc-900 border border-zinc-800 p-2 rounded-xl mb-4"
-                    >
-                      <input
-                        type="text"
-                        value={newProfileName}
-                        onChange={(e) => setNewProfileName(e.target.value)}
-                        placeholder="Enter profile name (e.g. 'Hip Hop')"
-                        className="flex-1 bg-zinc-950 border border-zinc-700 rounded-lg px-3 py-1.5 text-sm text-zinc-200 focus:outline-none focus:border-indigo-500"
-                        autoFocus
-                      />
+                  
+                  {/* Persona Profile Selection */}
+                  <div className="flex flex-wrap gap-2 mb-4">
+                    {profiles.map(profile => (
                       <button
-                        onClick={handleSaveNewProfile}
-                        disabled={!newProfileName.trim()}
-                        className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white px-3 py-1.5 rounded-lg text-sm font-medium transition-colors"
+                        key={profile.id}
+                        onClick={() => handleProfileSelect(profile.id)}
+                        className={`px-4 py-1.5 rounded-xl text-[10px] font-black transition-all border ${
+                          activeProfileId === profile.id 
+                            ? 'bg-white text-black border-white shadow-xl' 
+                            : 'bg-zinc-900 border-zinc-800 text-zinc-500 hover:border-zinc-600 hover:text-zinc-300'
+                        }`}
                       >
-                        Save
+                        {profile.name}
                       </button>
+                    ))}
+                    {!isSavingProfile ? (
                       <button
-                        onClick={() => {
-                          setIsSavingProfile(false);
-                          setNewProfileName('');
-                        }}
-                        className="text-zinc-400 hover:text-zinc-200 px-2 py-1.5 text-sm transition-colors"
+                        onClick={() => setIsSavingProfile(true)}
+                        disabled={!lyricistPersonality.trim()}
+                        className="px-4 py-1.5 rounded-xl text-[10px] font-black bg-zinc-950 border border-zinc-800 text-zinc-600 hover:text-indigo-400 transition-all flex items-center gap-2 disabled:opacity-30"
                       >
-                        Cancel
+                        <Plus className="w-3.5 h-3.5" /> NEW ENGINE
                       </button>
-                    </motion.div>
-                  )}
+                    ) : (
+                      <motion.div 
+                        initial={{ opacity: 0, scale: 0.95 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        className="flex items-center gap-2 bg-zinc-950 px-3 py-1 rounded-xl border border-indigo-500 shadow-lg shadow-indigo-500/20"
+                      >
+                        <input
+                          type="text"
+                          value={newProfileName}
+                          onChange={(e) => setNewProfileName(e.target.value)}
+                          placeholder="Name..."
+                          className="bg-transparent border-none px-0 py-0.5 text-[10px] text-white focus:ring-0 w-20 font-bold uppercase"
+                          autoFocus
+                        />
+                        <button onClick={handleSaveNewProfile} disabled={!newProfileName.trim()} className="text-white hover:text-indigo-400">
+                          <Check className="w-3.5 h-3.5" />
+                        </button>
+                        <button onClick={() => setIsSavingProfile(false)} className="text-zinc-600 hover:text-white">
+                          <RefreshCw className="w-3.5 h-3.5" />
+                        </button>
+                      </motion.div>
+                    )}
+                  </div>
 
                   <textarea
                     id="lyricist-personality"
                     value={lyricistPersonality}
                     onChange={(e) => handlePersonalityChange(e.target.value)}
-                    placeholder={activeProfileId ? "Edit the rules for this profile here... Changes are saved automatically." : "e.g., 'Write in the style of Eminem. Use multi-syllabic rhymes. Do not use generic structures. Be highly explicit and raw.'"}
-                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-sm text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500 transition-all min-h-[100px] custom-scrollbar resize-y mt-2"
+                    placeholder={activeProfileId ? "Refine your creative rules..." : "e.g., 'Write like a noir detective. Cinematic imagery. No rhyming metaphors.'"}
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl px-5 py-4 text-sm text-zinc-200 placeholder:text-zinc-800 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 transition-all min-h-[120px] custom-scrollbar shadow-inner"
                   />
                 </div>
                 
                 {extractedProfile && (
-                  <motion.div
-                    initial={{ opacity: 0, height: 0 }}
-                    animate={{ opacity: 1, height: 'auto' }}
-                    className="space-y-4 border-t border-zinc-800/80 pt-6 mt-2"
-                  >
-                    <h3 className="text-sm font-semibold text-indigo-400 flex items-center gap-2">
-                      <Sparkles className="w-4 h-4" /> Step 2: Songwriter Profile (Tweakable)
-                    </h3>
-                    <div className="grid grid-cols-2 gap-3">
-                      <div>
-                        <label className="block text-[11px] font-medium text-zinc-400 mb-1 uppercase tracking-wider">Vocal Persona</label>
-                        <input type="text" value={extractedProfile.vocalPersona} onChange={(e) => updateProfileField('vocalPersona', e.target.value)} className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-200 focus:outline-none focus:border-indigo-500 transition-colors" />
-                      </div>
-                      <div>
-                        <label className="block text-[11px] font-medium text-zinc-400 mb-1 uppercase tracking-wider">Emotional Flavor / Tone</label>
-                        <input type="text" value={extractedProfile.emotionalTone} onChange={(e) => updateProfileField('emotionalTone', e.target.value)} className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-200 focus:outline-none focus:border-indigo-500 transition-colors" />
-                      </div>
-                      <div>
-                        <label className="block text-[11px] font-medium text-zinc-400 mb-1 uppercase tracking-wider">Relationship</label>
-                        <input type="text" value={extractedProfile.relationshipDynamic} onChange={(e) => updateProfileField('relationshipDynamic', e.target.value)} className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-200 focus:outline-none focus:border-indigo-500 transition-colors" />
-                      </div>
-                      <div>
-                        <label className="block text-[11px] font-medium text-zinc-400 mb-1 uppercase tracking-wider">Lyrical Density</label>
-                        <input type="text" value={extractedProfile.lyricalDensity} onChange={(e) => updateProfileField('lyricalDensity', e.target.value)} className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-200 focus:outline-none focus:border-indigo-500 transition-colors" />
-                      </div>
-                    </div>
-                    
-                    <div className="space-y-3 pt-2">
-                      <div>
-                        <label className="block text-[11px] font-medium text-zinc-400 mb-1 uppercase tracking-wider">Environment / Setting</label>
-                        <input type="text" value={extractedProfile.environment || ''} onChange={(e) => updateProfileField('environment', e.target.value)} placeholder="e.g., A dimly lit elevator stalled between floors" className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-200 focus:outline-none focus:border-indigo-500 transition-colors" />
-                      </div>
-                      <div>
-                        <label className="block text-[11px] font-medium text-zinc-400 mb-1 uppercase tracking-wider">Sensory Palette</label>
-                        <input type="text" value={extractedProfile.sensoryPalette || ''} onChange={(e) => updateProfileField('sensoryPalette', e.target.value)} placeholder="e.g., Cold steel, expensive cologne, sweat-damp silk" className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-200 focus:outline-none focus:border-indigo-500 transition-colors" />
-                      </div>
-                      <div className="grid grid-cols-2 gap-3">
-                        <div>
-                          <label className="block text-[11px] font-medium text-zinc-400 mb-1 uppercase tracking-wider">Physical Motif</label>
-                          <input type="text" value={extractedProfile.physicalMotif || ''} onChange={(e) => updateProfileField('physicalMotif', e.target.value)} placeholder="e.g., Heat of a palm on the small of the back" className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-200 focus:outline-none focus:border-indigo-500 transition-colors" />
+                  <div className="space-y-4 border-t border-zinc-800/50 pt-8 mt-4">
+                    <button 
+                      onClick={() => setIsExpertSettingsOpen(!isExpertSettingsOpen)}
+                      className="w-full flex items-center justify-between group py-2"
+                    >
+                      <h3 className="text-[10px] font-black text-indigo-400 uppercase tracking-[0.2em] flex items-center gap-3">
+                        <div className="w-8 h-8 rounded-lg bg-indigo-500/5 flex items-center justify-center text-indigo-400 group-hover:scale-110 transition-transform">
+                          <Settings2 className="w-4 h-4" />
                         </div>
-                        <div>
-                          <label className="block text-[11px] font-medium text-zinc-400 mb-1 uppercase tracking-wider">Chorus Behavior</label>
-                          <input type="text" value={extractedProfile.chorusBehavior || ''} onChange={(e) => updateProfileField('chorusBehavior', e.target.value)} placeholder="e.g., A rhythmic, whispered surrender" className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-200 focus:outline-none focus:border-indigo-500 transition-colors" />
-                        </div>
+                        Creative DNA Engine
+                      </h3>
+                      <div className={`transition-transform duration-300 ${isExpertSettingsOpen ? 'rotate-180' : ''}`}>
+                         <RefreshCw className="w-4 h-4 text-zinc-700" />
                       </div>
-                    </div>
+                    </button>
 
-                    <div className="space-y-3 pt-4 border-t border-zinc-800/80">
-                      <div className="flex items-center gap-2">
-                        <input 
-                          type="checkbox" 
-                          id="injectVocalTags" 
-                          checked={injectVocalTags} 
-                          onChange={(e) => setInjectVocalTags(e.target.checked)}
-                          className="rounded bg-zinc-900 border-zinc-700 text-indigo-500 focus:ring-indigo-500/50 cursor-pointer"
-                        />
-                        <label htmlFor="injectVocalTags" className="text-xs text-zinc-300 cursor-pointer font-medium">Inject Audio Generator Tags (Suno/Udio braces & parentheses)</label>
-                      </div>
+                    <AnimatePresence>
+                      {isExpertSettingsOpen && (
+                        <motion.div
+                          initial={{ opacity: 0, height: 0 }}
+                          animate={{ opacity: 1, height: 'auto' }}
+                          exit={{ opacity: 0, height: 0 }}
+                          className="overflow-hidden"
+                        >
+                          <div className="space-y-6 pt-4 pb-2">
+                            <div className="grid grid-cols-2 gap-4">
+                              <div className="space-y-2">
+                                <label className="block text-[9px] font-black text-zinc-600 uppercase tracking-widest pl-1">Vocal Persona</label>
+                                <input type="text" value={extractedProfile.vocalPersona} onChange={(e) => updateProfileField('vocalPersona', e.target.value)} className="w-full bg-zinc-950/30 border border-zinc-800/80 rounded-xl px-4 py-2 text-sm text-zinc-300 focus:outline-none focus:border-indigo-500 transition-colors" />
+                              </div>
+                              <div className="space-y-2">
+                                <label className="block text-[9px] font-black text-zinc-600 uppercase tracking-widest pl-1">Emotional Tone</label>
+                                <input type="text" value={extractedProfile.emotionalTone} onChange={(e) => updateProfileField('emotionalTone', e.target.value)} className="w-full bg-zinc-950/30 border border-zinc-800/80 rounded-xl px-4 py-2 text-sm text-zinc-300 focus:outline-none focus:border-indigo-500 transition-colors" />
+                              </div>
+                            </div>
 
-                      <div className="grid grid-cols-2 gap-3 mt-2">
-                        <div>
-                          <label className="block text-xs font-medium text-zinc-300 mb-1">Rhyme Scheme</label>
-                          <select 
-                            value={rhymeComplexity} 
-                            onChange={(e) => setRhymeComplexity(e.target.value)}
-                            className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-2 py-2 text-sm text-zinc-200 focus:outline-none focus:border-indigo-500 transition-colors"
-                          >
-                            <option value="default">Default (Any)</option>
-                            <option value="slant">Modern / Slant Rhymes</option>
-                            <option value="multi">Complex / Multi-syllabic</option>
-                          </select>
-                        </div>
-                        <div>
-                          <label className="block text-xs font-medium text-zinc-300 mb-1">Emotional Arc</label>
-                          <select 
-                            value={emotionalArc} 
-                            onChange={(e) => setEmotionalArc(e.target.value)}
-                            className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-2 py-2 text-sm text-zinc-200 focus:outline-none focus:border-indigo-500 transition-colors"
-                          >
-                            <option value="static">Static / Vibe</option>
-                            <option value="downward">Downward Spiral (Gets darker)</option>
-                            <option value="realization">The Realization (Epiphany)</option>
-                            <option value="upward">Triumphant (Builds up)</option>
-                          </select>
-                        </div>
-                        <div>
-                          <label className="block text-xs font-medium text-zinc-300 mb-1">Instrumental Pacing</label>
-                          <select 
-                            value={instrumentalPacing} 
-                            onChange={(e) => setInstrumentalPacing(e.target.value)}
-                            className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-2 py-2 text-sm text-zinc-200 focus:outline-none focus:border-indigo-500 transition-colors"
-                          >
-                            <option value="default">Vocal-heavy (Default)</option>
-                            <option value="balanced">Balanced (Instrumental breaks)</option>
-                            <option value="cinematic">Cinematic / Spacious</option>
-                          </select>
-                        </div>
-                      </div>
+                            <div className="grid grid-cols-2 gap-4">
+                              <div className="space-y-2">
+                                <label className="block text-[9px] font-black text-zinc-600 uppercase tracking-widest pl-1">Relationship</label>
+                                <input type="text" value={extractedProfile.relationshipDynamic || ''} onChange={(e) => updateProfileField('relationshipDynamic', e.target.value)} placeholder="Tension, intimacy..." className="w-full bg-zinc-950/30 border border-zinc-800/80 rounded-xl px-4 py-2 text-sm text-zinc-300 focus:outline-none focus:border-indigo-500 transition-colors" />
+                              </div>
+                              <div className="space-y-2">
+                                <label className="block text-[9px] font-black text-zinc-600 uppercase tracking-widest pl-1">Lyrical Density</label>
+                                <input type="text" value={extractedProfile.lyricalDensity || ''} onChange={(e) => updateProfileField('lyricalDensity', e.target.value)} placeholder="Sparse, dense..." className="w-full bg-zinc-950/30 border border-zinc-800/80 rounded-xl px-4 py-2 text-sm text-zinc-300 focus:outline-none focus:border-indigo-500 transition-colors" />
+                              </div>
+                            </div>
+                            
+                            <div className="space-y-4">
+                              <div className="space-y-2">
+                                <label className="block text-[9px] font-black text-zinc-600 uppercase tracking-widest pl-1">Environment</label>
+                                <input type="text" value={extractedProfile.environment || ''} onChange={(e) => updateProfileField('environment', e.target.value)} placeholder="Neon-drenched hallway..." className="w-full bg-zinc-950/30 border border-zinc-800/80 rounded-xl px-4 py-2 text-sm text-zinc-300 focus:outline-none focus:border-indigo-500 transition-colors" />
+                              </div>
+                              <div className="space-y-2">
+                                <label className="block text-[9px] font-black text-zinc-600 uppercase tracking-widest pl-1">Sensory Palette</label>
+                                <input type="text" value={extractedProfile.sensoryPalette || ''} onChange={(e) => updateProfileField('sensoryPalette', e.target.value)} placeholder="Ozone, cold rain..." className="w-full bg-zinc-950/30 border border-zinc-800/80 rounded-xl px-4 py-2 text-sm text-zinc-300 focus:outline-none focus:border-indigo-500 transition-colors" />
+                              </div>
+                            </div>
 
-                      <div className="mt-2">
-                        <label className="block text-xs font-medium text-zinc-300 mb-1">Visual Anchor / Seed Object (Optional)</label>
-                        <input 
-                          type="text" 
-                          value={visualAnchor} 
-                          onChange={(e) => setVisualAnchor(e.target.value)} 
-                          placeholder="e.g., 'A cracked iPhone screen', 'A single red balloon'" 
-                          className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:border-indigo-500 transition-colors" 
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-xs font-medium text-zinc-300 mb-1">Structural Blueprint (Optional)</label>
-                        <input 
-                          type="text" 
-                          value={customStructure} 
-                          onChange={(e) => setCustomStructure(e.target.value)} 
-                          placeholder="e.g., '[Intro], [Verse 1], [Beat Drop], [Chorus]'" 
-                          className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:border-indigo-500 transition-colors font-mono" 
-                        />
-                      </div>
-                    </div>
-                  </motion.div>
+                            <div className="grid grid-cols-2 gap-4">
+                              <div className="space-y-2">
+                                <label className="block text-[9px] font-black text-zinc-600 uppercase tracking-widest pl-1">Rhyme Scheme</label>
+                                <select 
+                                  value={rhymeComplexity} 
+                                  onChange={(e) => setRhymeComplexity(e.target.value)}
+                                  className="w-full bg-zinc-950 text-indigo-400 border border-zinc-800 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-indigo-500 appearance-none font-bold"
+                                >
+                                  <option value="default">NATURAL (AABB/ABAB)</option>
+                                  <option value="slant">MODERN / SLANT RHYME</option>
+                                  <option value="multi">COMPLEX / MULTI-SYLLABIC</option>
+                                </select>
+                              </div>
+                              <div className="space-y-2">
+                                <label className="block text-[9px] font-black text-zinc-600 uppercase tracking-widest pl-1">Emotional Arc</label>
+                                <select 
+                                  value={emotionalArc} 
+                                  onChange={(e) => setEmotionalArc(e.target.value)}
+                                  className="w-full bg-zinc-950 text-indigo-400 border border-zinc-800 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-indigo-500 appearance-none font-bold"
+                                >
+                                  <option value="static">STATIC (STABLE)</option>
+                                  <option value="upward">UPWARD ARC (CLIMAX)</option>
+                                  <option value="downward">DOWNWARD SPIRAL</option>
+                                  <option value="waves">WAVES (OSCILLATING)</option>
+                                  <option value="climax">CENTERED CLIMAX</option>
+                                </select>
+                              </div>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-4">
+                              <div className="space-y-2">
+                                <label className="block text-[9px] font-black text-zinc-600 uppercase tracking-widest pl-1">Instrumental Pacing</label>
+                                <select 
+                                  value={instrumentalPacing} 
+                                  onChange={(e) => setInstrumentalPacing(e.target.value)}
+                                  className="w-full bg-zinc-950 text-indigo-400 border border-zinc-800 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-indigo-500 appearance-none font-bold"
+                                >
+                                  <option value="default">STANDARD</option>
+                                  <option value="balanced">BALANCED BREAKS</option>
+                                  <option value="cinematic">CINEMATIC / SPACIOUS</option>
+                                </select>
+                              </div>
+                              <div className="space-y-2">
+                                <label className="block text-[9px] font-black text-zinc-600 uppercase tracking-widest pl-1">Audio Tags</label>
+                                <button
+                                  onClick={() => setInjectVocalTags(!injectVocalTags)}
+                                  className={`w-full py-2 px-4 rounded-xl text-[10px] font-black transition-all border ${
+                                    injectVocalTags 
+                                      ? 'bg-indigo-500 text-white border-indigo-400' 
+                                      : 'bg-zinc-950 border-zinc-800 text-zinc-600'
+                                  }`}
+                                >
+                                  {injectVocalTags ? 'ENABLED' : 'DISABLED'}
+                                </button>
+                              </div>
+                            </div>
+
+                            <div className="space-y-4">
+                              <div className="space-y-2">
+                                <label className="block text-[9px] font-black text-zinc-600 uppercase tracking-widest pl-1">Visual Anchor / Seed Object</label>
+                                <input 
+                                  type="text" 
+                                  value={visualAnchor} 
+                                  onChange={(e) => setVisualAnchor(e.target.value)} 
+                                  placeholder="e.g., 'A cracked iPhone screen', 'A single red balloon'" 
+                                  className="w-full bg-zinc-950/30 border border-zinc-800/80 rounded-xl px-4 py-2 text-sm text-zinc-300 focus:outline-none focus:border-indigo-500 transition-colors" 
+                                />
+                              </div>
+                              <div className="space-y-2">
+                                <label className="block text-[9px] font-black text-zinc-600 uppercase tracking-widest pl-1">Structural Blueprint</label>
+                                <input 
+                                  type="text" 
+                                  value={customStructure} 
+                                  onChange={(e) => setCustomStructure(e.target.value)} 
+                                  placeholder="e.g., '[Intro], [Verse 1], [Beat Drop], [Chorus]'" 
+                                  className="w-full bg-zinc-950/30 border border-zinc-800/80 rounded-xl px-4 py-2 text-sm text-zinc-300 focus:outline-none focus:border-indigo-500 transition-colors" 
+                                />
+                              </div>
+                            </div>
+                          </div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </div>
                 )}
               </div>
 
@@ -1268,386 +1289,307 @@ export default function App() {
           </div>
 
           {/* Result Section */}
-          <div className="lg:col-span-7">
-            <div className="bg-zinc-900/50 border border-zinc-800 rounded-2xl p-6 h-full min-h-[400px] flex flex-col">
-              <div className="flex items-center justify-between mb-6 pb-4 border-b border-zinc-800/50">
-                <h2 className="text-lg font-medium text-zinc-200 flex items-center gap-2">
-                  {generatedLyrics && !result ? <FileText className="w-5 h-5 text-indigo-400" /> : <Music className="w-5 h-5 text-indigo-400" />}
-                  {generatedLyrics && !result ? 'Generated Lyrics' : generatedLyrics && result ? 'Analysis & Lyrics' : 'Analysis Result'}
-                </h2>
-                {(result || generatedLyrics) && (
-                  <button 
-                    onClick={handleReset}
-                    className="text-xs text-zinc-400 hover:text-zinc-200 flex items-center gap-1 transition-colors"
-                  >
-                    <RefreshCw className="w-3 h-3" />
-                    Reset
-                  </button>
-                )}
-              </div>
-
-              <div className="flex-1 overflow-y-auto custom-scrollbar pr-2">
+          <div className="lg:col-span-8 space-y-12">
+            {!isAnalyzing && !generatedLyrics && !result ? (
+               <div className="h-full min-h-[600px] flex flex-col items-center justify-center text-zinc-600 border-2 border-dashed border-zinc-900 rounded-[48px] p-12 text-center group bg-zinc-950/20 glass-card">
+                 <div className="w-24 h-24 rounded-[32px] bg-zinc-900 flex items-center justify-center mb-8 group-hover:scale-110 transition-transform duration-700 border border-white/[0.03] shadow-2xl relative">
+                    <div className="absolute inset-0 bg-indigo-500/10 rounded-[32px] blur-xl opacity-0 group-hover:opacity-100 transition-opacity" />
+                    <Music className="w-10 h-10 text-zinc-700 relative z-10" />
+                 </div>
+                 <h2 className="text-3xl font-black text-white mb-4 tracking-tighter uppercase leading-none">Awaiting Signal</h2>
+                 <p className="text-zinc-500 max-w-sm mx-auto font-medium text-sm leading-relaxed">
+                   Provide a song reference or lyrical theme to hydrate the creative pipeline.
+                 </p>
+               </div>
+            ) : (
+              <div className="space-y-16 pb-24">
                 {isAnalyzing ? (
-                  <div className="h-full flex flex-col items-center justify-center text-zinc-500 space-y-4 py-12">
+                  <div className="h-[500px] flex flex-col items-center justify-center space-y-8 bg-zinc-900/20 border border-white/[0.03] rounded-[48px] glass-card">
                     <div className="relative">
-                      <div className="w-16 h-16 border-4 border-zinc-800 rounded-full"></div>
-                      <div className="w-16 h-16 border-4 border-indigo-500 rounded-full border-t-transparent animate-spin absolute top-0 left-0"></div>
-                      {currentAction === 'lyrics' ? (
-                        <FileText className="w-6 h-6 absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-zinc-400 animate-pulse" />
-                      ) : (
-                        <Music className="w-6 h-6 absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-zinc-400 animate-pulse" />
-                      )}
+                      <div className="w-24 h-24 border-2 border-zinc-900 rounded-full"></div>
+                      <div className="w-24 h-24 border-2 border-indigo-500 rounded-full border-t-transparent animate-spin absolute top-0 left-0 shadow-[0_0_30px_rgba(99,102,241,0.3)]"></div>
                     </div>
-                    <p className="text-sm animate-pulse">
-                      {currentAction === 'compare' ? 'Comparing musical DNA...' : currentAction === 'lyrics' ? 'Writing lyrics...' : 'Extracting musical DNA...'}
-                    </p>
+                    <div className="text-center space-y-2">
+                       <p className="text-sm font-black text-white uppercase tracking-[0.4em] animate-pulse">
+                         {currentAction === 'compare' ? 'Syncing DNA' : currentAction === 'lyrics' ? 'Drafting Score' : 'Deconstructing Signal'}
+                       </p>
+                    </div>
                   </div>
-                ) : generatedLyrics || result ? (
-                  <div className="flex flex-col gap-10">
-                    {result && (
-                      <motion.div 
-                        initial={{ opacity: 0 }}
-                        animate={{ opacity: 1 }}
-                        className="prose prose-invert prose-zinc max-w-none prose-p:leading-relaxed prose-headings:text-zinc-200 prose-a:text-indigo-400 relative group"
-                      >
-                        <div className="absolute top-0 right-0 opacity-0 group-hover:opacity-100 transition-opacity">
-                          {result.toLowerCase().includes('generator prompt') && (
-                            <button 
-                              onClick={() => {
-                                const match = result.match(/Music Generator Prompt(?:\*\*)?:?\s*([\s\S]*)$/i);
-                                const promptPart = match ? match[1].trim() : result;
-                                handleCopy(promptPart, 'prompt');
-                              }}
-                              className="p-2 bg-zinc-900 border border-zinc-800 rounded-lg text-zinc-400 hover:text-indigo-400 transition-colors flex items-center gap-2 text-xs"
-                              title="Copy Generator Prompt"
-                            >
-                              {copiedId === 'prompt' ? <><Check className="w-3.5 h-3.5 text-green-500" /> Copied</> : <><Copy className="w-3.5 h-3.5" /> Copy Prompt</>}
-                            </button>
-                          )}
+                ) : (
+                  <div className="space-y-16 animate-in fade-in duration-1000">
+                    <div className="flex flex-col sm:flex-row items-center justify-between gap-6 px-4">
+                      <div className="flex items-center gap-6">
+                        <div className="w-14 h-14 rounded-2xl bg-indigo-500/5 flex items-center justify-center text-indigo-400 border border-indigo-500/10 shadow-inner">
+                           {generatedLyrics && !result ? <FileText className="w-7 h-7" /> : <Library className="w-7 h-7" />}
                         </div>
-                        <ReactMarkdown>{result}</ReactMarkdown>
+                        <div>
+                          <h2 className="text-3xl font-black text-white tracking-tighter leading-none">
+                            {generatedLyrics && !result ? 'LYRIC OPS' : generatedLyrics && result ? 'STUDIO DUMP' : 'SONIC REPORT'}
+                          </h2>
+                          <p className="text-[10px] text-zinc-500 mt-2 uppercase tracking-[0.3em] font-black">Ref: {songTitle || 'External Signal'}</p>
+                        </div>
+                      </div>
+                      <button onClick={handleReset} className="px-6 py-2.5 bg-zinc-950 hover:bg-zinc-900 text-zinc-500 hover:text-white rounded-full text-[10px] font-black uppercase tracking-widest border border-zinc-900 transition-all active:scale-95">Reset Session</button>
+                    </div>
+                    {/* Dashboard Modules */}
+                    <div className="space-y-16">
+                      {/* Analysis Block */}
+                      {result && (
+                        <motion.div 
+                          initial={{ opacity: 0, y: 20 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          className="bg-zinc-900/30 border border-white/[0.03] rounded-[48px] p-12 glass-card shadow-3xl relative group overflow-hidden"
+                        >
+                           <div className="absolute top-0 right-0 w-64 h-64 bg-indigo-600/5 blur-[100px] -mr-32 -mt-32" />
+                           <div className="absolute top-6 right-6 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <button 
+                              onClick={() => handleCopy(result, 'report')}
+                              className="p-3 bg-zinc-950 border border-zinc-900 rounded-[20px] text-zinc-600 hover:text-indigo-400 transition-all shadow-xl"
+                            >
+                              {copiedId === 'report' ? <Check className="w-5 h-5 text-green-500" /> : <Copy className="w-5 h-5" />}
+                            </button>
+                          </div>
+                          <div className="prose prose-invert prose-indigo max-w-none prose-p:leading-relaxed prose-headings:text-white prose-a:text-indigo-400 lg:prose-xl font-medium text-zinc-300">
+                             <ReactMarkdown>{result}</ReactMarkdown>
+                          </div>
+                        </motion.div>
+                      )}
 
-                        {extractedProfile?.sonicDNA && (
+                      {/* Visual Content Block */}
+                      {extractedProfile?.sonicDNA && (
+                        <div className="grid grid-cols-1 xl:grid-cols-2 gap-12">
                           <motion.div
-                            initial={{ opacity: 0, y: 20 }}
-                            animate={{ opacity: 1, y: 0 }}
-                            className="mt-12 space-y-8"
+                            initial={{ opacity: 0, x: -30 }}
+                            animate={{ opacity: 1, x: 0 }}
+                            className="bg-zinc-900/30 border border-white/[0.03] rounded-[48px] p-10 glass-card"
                           >
-                            <div className="flex flex-col md:flex-row gap-8 items-center">
-                              <div className="flex-1 w-full">
-                                <h3 className="text-sm font-bold text-indigo-400 uppercase tracking-widest mb-6 flex items-center gap-2">
-                                  <LayoutDashboard className="w-4 h-4" /> Sonic DNA Radar
-                                </h3>
-                                <SonicRadarChart data={extractedProfile.sonicDNA} />
+                            <div className="flex items-center gap-4 mb-10">
+                              <div className="w-12 h-12 rounded-2xl bg-orange-500/5 flex items-center justify-center text-orange-400 border border-orange-500/10">
+                                <Activity className="w-6 h-6" />
                               </div>
-                              
-                              <div className="flex-1 w-full space-y-6">
-                                <h3 className="text-sm font-bold text-indigo-400 uppercase tracking-widest mb-2 flex items-center gap-2">
-                                  <Sparkles className="w-4 h-4" /> Mood Visual (Album Art)
-                                </h3>
-                                
-                                {!moodVisualUrl ? (
-                                  <div className="aspect-square bg-zinc-950 border border-zinc-800 rounded-2xl flex flex-col items-center justify-center p-6 text-center group">
-                                    <div className="h-20 w-20 rounded-full bg-indigo-500/10 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
-                                      <Wand2 className="w-8 h-8 text-indigo-400" />
-                                    </div>
-                                    <p className="text-xs text-zinc-500 mb-6 italic">"{extractedProfile.visualPrompt}"</p>
-                                    <button
-                                      onClick={handleGenerateVisual}
-                                      disabled={isGeneratingMoodVisual}
-                                      className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-semibold py-3 px-4 rounded-xl transition-all shadow-lg shadow-indigo-500/20 flex items-center justify-center gap-2 disabled:opacity-50"
-                                    >
-                                      {isGeneratingMoodVisual ? (
-                                        <><Loader2 className="w-4 h-4 animate-spin" /> Rendering Mood...</>
-                                      ) : (
-                                        <><Sparkles className="w-4 h-4" /> Generate Album Art</>
-                                      )}
-                                    </button>
-                                  </div>
-                                ) : (
-                                  <motion.div
-                                    initial={{ opacity: 0, scale: 0.9 }}
-                                    animate={{ opacity: 1, scale: 1 }}
-                                    className="relative group aspect-square rounded-2xl overflow-hidden border border-zinc-800 shadow-2xl"
-                                  >
-                                    <img src={moodVisualUrl} alt="Mood Visual" className="w-full h-full object-cover" />
-                                    <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center p-4">
-                                      <div className="text-center">
-                                        <button
-                                          onClick={() => handleCopy(moodVisualUrl, 'moodImg')}
-                                          className="bg-white text-black px-4 py-2 rounded-full text-xs font-bold transition-all shadow-xl hover:scale-105 active:scale-95"
-                                        >
-                                          {copiedId === 'moodImg' ? 'Copied URL!' : 'Share Visual'}
-                                        </button>
-                                        <p className="text-[10px] text-zinc-300 mt-4 px-4 line-clamp-3 italic opacity-80">
-                                          {extractedProfile.visualPrompt}
-                                        </p>
-                                      </div>
-                                    </div>
-                                  </motion.div>
-                                )}
-                              </div>
+                              <h3 className="text-[10px] font-black text-white uppercase tracking-[0.3em]">Sonic Signature</h3>
+                            </div>
+                            <div className="aspect-square flex items-center justify-center">
+                              <SonicRadarChart data={extractedProfile.sonicDNA} />
                             </div>
                           </motion.div>
-                        )}
-                      </motion.div>
-                    )}
 
-                    {generatedLyrics && result && <div className="w-full h-px bg-zinc-800/50"></div>}
-
-                    {lyricsPrompt && (
-                      <motion.div
-                        initial={{ opacity: 0 }}
-                        animate={{ opacity: 1 }}
-                        className="bg-zinc-950/80 border border-zinc-800/80 rounded-xl overflow-hidden"
-                      >
-                        <div className="px-4 py-3 border-b border-zinc-800 flex items-center justify-between bg-zinc-900/50">
-                          <p className="text-xs font-semibold text-zinc-400 uppercase tracking-wider flex items-center gap-2">
-                            <Wand2 className="w-3.5 h-3.5" /> Raw LLM Prompt Sent
-                          </p>
-                          <button
-                            onClick={() => handleCopy(lyricsPrompt, 'rawPrompt')}
-                            className="text-xs font-medium text-zinc-500 hover:text-indigo-400 transition-colors flex items-center gap-1.5"
+                          <motion.div
+                            initial={{ opacity: 0, x: 30 }}
+                            animate={{ opacity: 1, x: 0 }}
+                            className="bg-zinc-900/30 border border-white/[0.03] rounded-[48px] p-10 glass-card flex flex-col"
                           >
-                            {copiedId === 'rawPrompt' ? <><Check className="w-3 h-3 text-green-500" /> Copied</> : <><Copy className="w-3 h-3" /> Copy Prompt</>}
-                          </button>
-                        </div>
-                        <div className="p-4 overflow-x-auto">
-                          <pre className="text-[11px] text-zinc-500 font-mono whitespace-pre-wrap leading-relaxed">
-                            {lyricsPrompt}
-                          </pre>
-                        </div>
-                      </motion.div>
-                    )}
-
-                    {generatedLyrics && (
-                      <motion.div 
-                        initial={{ opacity: 0 }}
-                        animate={{ opacity: 1 }}
-                        className="space-y-6"
-                      >
-                    <div className="bg-zinc-950/50 border border-zinc-800/50 rounded-xl p-4 flex items-center justify-between">
-                      <div>
-                        <p className="text-xs text-zinc-500 uppercase tracking-wider font-semibold mb-1">Suggested Title</p>
-                        {isGeneratingTitle ? (
-                          <div className="flex items-center gap-2 text-zinc-400">
-                            <Loader2 className="w-4 h-4 animate-spin" />
-                            <span className="text-sm">Generating title...</span>
-                          </div>
-                        ) : (
-                          <h3 className="text-xl font-bold text-zinc-100">{songTitle || "Untitled"}</h3>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-1">
-                        {songTitle && (
-                          <button 
-                            onClick={() => handleCopy(songTitle, 'title')}
-                            className="p-2 hover:bg-zinc-800 rounded-lg text-zinc-400 hover:text-indigo-400 transition-colors"
-                            title="Copy Title"
-                          >
-                            {copiedId === 'title' ? <Check className="w-4 h-4 text-green-500" /> : <Copy className="w-4 h-4" />}
-                          </button>
-                        )}
-                        <button 
-                          onClick={handleRegenerateTitle}
-                          disabled={isGeneratingTitle}
-                          className="p-2 hover:bg-zinc-800 rounded-lg text-zinc-400 hover:text-indigo-400 transition-colors disabled:opacity-50"
-                          title="Regenerate Title"
-                        >
-                          <RefreshCw className="w-4 h-4" />
-                        </button>
-                      </div>
-                    </div>
-
-                    <div className="space-y-4">
-                      {Array.isArray(generatedLyrics) && generatedLyrics.length > 0 && (
-                        <div className="flex justify-end px-1 gap-2">
-                          <button
-                            onClick={() => {
-                              let musicPrompt = '';
-                              if (result) {
-                                const match = result.match(/\*\*(?:Music )?Generator Prompt(?:\*\*)?:?\s*([\s\S]*)$/i);
-                                musicPrompt = match ? match[1].trim() : result;
-                              }
-                              const text = generatedLyrics.map(s => `[${s.label}]\n${s.text}`).join('\n\n');
-                              const payload = musicPrompt ? `${musicPrompt}\n\n${text}` : text;
-                              handleCopy(payload, 'masterPayload');
-                            }}
-                            className="text-xs font-medium text-zinc-500 hover:text-indigo-400 transition-colors flex items-center gap-1.5"
-                          >
-                            {copiedId === 'masterPayload' ? <><Check className="w-3 h-3 text-green-500" /> Copied Payload</> : <><Copy className="w-3 h-3" /> Master Payload (Suno/Udio)</>}
-                          </button>
-                          <span className="text-zinc-800">|</span>
-                          <button
-                            onClick={() => {
-                              const text = generatedLyrics.map(s => `[${s.label}]\n${s.text}`).join('\n\n');
-                              handleCopy(text, 'lyrics');
-                            }}
-                            className="text-xs font-medium text-zinc-500 hover:text-indigo-400 transition-colors flex items-center gap-1.5"
-                          >
-                            {copiedId === 'lyrics' ? <><Check className="w-3 h-3 text-green-500" /> Copied to clipboard</> : <><Copy className="w-3 h-3" /> Copy Lyrics</>}
-                          </button>
-                          <span className="text-zinc-800">|</span>
-                          <button
-                            onClick={() => setIsBoothMode(true)}
-                            className="text-xs font-medium text-indigo-400 hover:text-indigo-300 transition-colors flex items-center gap-1.5 bg-indigo-500/10 px-2 py-1 rounded"
-                          >
-                            <Mic className="w-3 h-3" /> Enter Booth Mode
-                          </button>
+                             <div className="flex items-center gap-4 mb-10">
+                              <div className="w-12 h-12 rounded-2xl bg-purple-500/5 flex items-center justify-center text-purple-400 border border-purple-500/10">
+                                <Monitor className="w-6 h-6" />
+                              </div>
+                              <h3 className="text-[10px] font-black text-white uppercase tracking-[0.3em]">Visual DNA</h3>
+                            </div>
+                            
+                            <div className="flex-1 flex flex-col justify-center gap-6 min-h-[380px]">
+                              {!moodVisualUrl ? (
+                                <div className="flex-1 bg-zinc-950/20 border-2 border-dashed border-zinc-900 rounded-[32px] flex flex-col items-center justify-center p-12 text-center group/art">
+                                  <p className="text-xs text-zinc-600 mb-8 font-serif leading-loose px-8">"{extractedProfile.visualPrompt}"</p>
+                                  <button
+                                    onClick={handleGenerateVisual}
+                                    disabled={isGeneratingMoodVisual}
+                                    className="px-10 py-4 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-black uppercase tracking-[0.2em] rounded-full transition-all shadow-2xl shadow-indigo-500/20 disabled:opacity-50 active:scale-95 flex items-center gap-3"
+                                  >
+                                    {isGeneratingMoodVisual ? <><Loader2 className="w-4 h-4 animate-spin" /> RENDER_IN_PROGRESS</> : <><Sparkles className="w-4 h-4" /> GENERATE_ART</>}
+                                  </button>
+                                </div>
+                              ) : (
+                                <div className="relative group aspect-square rounded-[32px] overflow-hidden shadow-3xl border border-white/[0.05]">
+                                  <img src={moodVisualUrl} alt="Visual" className="w-full h-full object-cover grayscale-[0.2] transition-all duration-1000 group-hover:scale-110 group-hover:grayscale-0" />
+                                  <div className="absolute inset-0 bg-zinc-950/80 opacity-0 group-hover:opacity-100 transition-all duration-500 flex flex-col items-center justify-center p-12 text-center backdrop-blur-md">
+                                    <button
+                                      onClick={() => handleCopy(moodVisualUrl, 'moodImg')}
+                                      className="bg-white text-black px-10 py-4 rounded-full text-xs font-black uppercase tracking-widest transition-all shadow-2xl"
+                                    >
+                                      Copy Visual Link
+                                    </button>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          </motion.div>
                         </div>
                       )}
-                      {Array.isArray(generatedLyrics) && generatedLyrics.map((segment, index) => (
-                        <div key={index} className="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden group">
-                          <div className="bg-zinc-950/50 px-4 py-2 border-b border-zinc-800 flex items-center justify-between">
-                            <span className="text-xs font-semibold text-indigo-400 uppercase tracking-wider">{segment.label}</span>
-                            <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                              <button 
-                                onClick={() => {
-                                  setEditingSegmentIndex(index);
-                                  setSegmentEditValue(segment.text);
-                                  setRewritingSegmentIndex(null);
-                                }}
-                                className="p-1.5 hover:bg-zinc-800 rounded-md text-zinc-400 hover:text-zinc-200 transition-colors"
-                                title="Edit manually"
-                              >
-                                <Edit3 className="w-3.5 h-3.5" />
-                              </button>
-                              <button 
-                                onClick={() => {
-                                  setRewritingSegmentIndex(index);
-                                  setEditingSegmentIndex(null);
-                                  setRewriteInstruction('');
-                                }}
-                                className="p-1.5 hover:bg-zinc-800 rounded-md text-zinc-400 hover:text-indigo-400 transition-colors"
-                                title="Rewrite with AI"
-                              >
-                                <Wand2 className="w-3.5 h-3.5" />
-                              </button>
+                      
+                      {/* AI Generator Suite */}
+                      {(extractedProfile?.musicalPrompt || extractedProfile?.stylePrompt) && (
+                        <motion.div
+                          initial={{ opacity: 0, y: 30 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          className="bg-zinc-900/30 border border-white/[0.03] rounded-[48px] p-10 glass-card space-y-12"
+                        >
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-4">
+                              <div className="w-12 h-12 rounded-2xl bg-indigo-500/5 flex items-center justify-center text-indigo-400 border border-indigo-500/10">
+                                <Sparkles className="w-6 h-6" />
+                              </div>
+                              <h3 className="text-[10px] font-black text-white uppercase tracking-[0.3em]">AI Generator Suite</h3>
                             </div>
+                            <p className="text-[10px] text-zinc-500 uppercase tracking-widest font-black">Optimized for Suno / Udio</p>
                           </div>
-                          
-                          <div className="p-4">
-                            {editingSegmentIndex === index ? (
-                              <div className="space-y-3">
-                                <textarea
-                                  value={segmentEditValue}
-                                  onChange={(e) => setSegmentEditValue(e.target.value)}
-                                  className="w-full bg-zinc-950 border border-zinc-700 rounded-lg p-3 text-sm text-zinc-200 focus:outline-none focus:ring-1 focus:ring-indigo-500 min-h-[100px]"
-                                />
-                                <div className="flex justify-between items-center mt-3 border-t border-zinc-800/80 pt-3">
+
+                          <div className="grid grid-cols-1 lg:grid-cols-2 gap-10">
+                            {extractedProfile.musicalPrompt && (
+                              <div className="space-y-6">
+                                <div className="flex items-center justify-between">
+                                  <h4 className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Master Musical DNA</h4>
                                   <button
-                                    onClick={() => handleGhostwriteContent(index)}
-                                    disabled={isGhostwriting}
-                                    className="px-3 py-1.5 text-xs font-medium text-indigo-400 hover:text-indigo-300 bg-indigo-500/10 hover:bg-indigo-500/20 rounded-md transition-colors flex items-center gap-1.5 disabled:opacity-50"
+                                    onClick={() => handleCopy(extractedProfile.musicalPrompt, 'music-gen')}
+                                    className="p-3 hover:bg-zinc-950 rounded-2xl text-zinc-600 hover:text-white transition-all"
                                   >
-                                    {isGhostwriting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Wand2 className="w-3.5 h-3.5" />}
-                                    {isGhostwriting ? 'Writing...' : 'Continue The Thought'}
+                                    {copiedId === 'music-gen' ? <Check className="w-4 h-4 text-green-400" /> : <Copy className="w-4 h-4" />}
                                   </button>
-                                  <div className="flex justify-end gap-2">
-                                    <button 
-                                      onClick={() => setEditingSegmentIndex(null)}
-                                      className="px-3 py-1.5 text-xs font-medium text-zinc-400 hover:text-zinc-200 transition-colors"
-                                    >
-                                      Cancel
-                                    </button>
-                                    <button 
-                                      onClick={() => handleSaveSegmentEdit(index)}
-                                      className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium rounded-md transition-colors flex items-center gap-1"
-                                    >
-                                      <Check className="w-3.5 h-3.5" /> Save
-                                    </button>
-                                  </div>
+                                </div>
+                                <div className="p-8 bg-zinc-950/40 border border-white/[0.02] rounded-3xl min-h-[160px] max-h-[300px] overflow-y-auto">
+                                  <p className="text-xs text-zinc-500 font-mono leading-relaxed">{extractedProfile.musicalPrompt}</p>
                                 </div>
                               </div>
-                            ) : rewritingSegmentIndex === index ? (
-                              <div className="space-y-3">
-                                <div className="whitespace-pre-wrap text-zinc-300 text-sm leading-relaxed mb-4 opacity-50">
-                                  {segment.text}
+                            )}
+
+                            {extractedProfile.stylePrompt && (
+                              <div className="space-y-6">
+                                <div className="flex items-center justify-between">
+                                  <h4 className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Style Tag Payload</h4>
+                                  <button
+                                    onClick={() => handleCopy(extractedProfile.stylePrompt, 'style-gen')}
+                                    className="p-3 hover:bg-zinc-950 rounded-2xl text-zinc-600 hover:text-white transition-all"
+                                  >
+                                    {copiedId === 'style-gen' ? <Check className="w-4 h-4 text-green-400" /> : <Copy className="w-4 h-4" />}
+                                  </button>
                                 </div>
-                                <div className="bg-indigo-500/10 border border-indigo-500/20 rounded-lg p-3">
-                                  <label className="block text-xs font-medium text-indigo-300 mb-2">How should AI rewrite this?</label>
-                                  <input
-                                    type="text"
-                                    value={rewriteInstruction}
-                                    onChange={(e) => setRewriteInstruction(e.target.value)}
-                                    placeholder="e.g., 'Make it more melancholic' or 'Change the perspective to first person'"
-                                    className="w-full bg-zinc-950 border border-zinc-700 rounded-md px-3 py-2 text-sm text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:ring-1 focus:ring-indigo-500 mb-3"
-                                  />
-                                  <div className="flex items-center gap-2 mb-3">
-                                    <input 
-                                      type="checkbox" 
-                                      id="lockSyllables" 
-                                      checked={lockSyllables} 
-                                      onChange={(e) => setLockSyllables(e.target.checked)}
-                                      className="rounded bg-zinc-900 border-zinc-700 text-indigo-500 focus:ring-indigo-500/50 cursor-pointer"
-                                    />
-                                    <label htmlFor="lockSyllables" className="text-xs text-zinc-400 cursor-pointer">Lock Syllable Count (Match Rhythm)</label>
-                                  </div>
-                                  <div className="flex justify-end gap-2">
-                                    <button 
-                                      onClick={() => setRewritingSegmentIndex(null)}
-                                      className="px-3 py-1.5 text-xs font-medium text-zinc-400 hover:text-zinc-200 transition-colors"
-                                    >
-                                      Cancel
-                                    </button>
-                                    <button 
-                                      onClick={() => handleRewriteSegment(index)}
-                                      disabled={!rewriteInstruction.trim() || isGeneratingRewrite}
-                                      className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium rounded-md transition-colors flex items-center gap-1 disabled:opacity-50"
-                                    >
-                                      {isGeneratingRewrite ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Wand2 className="w-3.5 h-3.5" />} 
-                                      {isGeneratingRewrite ? 'Punching in...' : 'Punch In (3 Options)'}
-                                    </button>
-                                  </div>
-                                  
-                                  {rewriteOptions && (
-                                    <div className="mt-4 space-y-2 border-t border-indigo-500/20 pt-4">
-                                      <p className="text-xs text-indigo-300 font-medium mb-2">Select a version to commit:</p>
-                                      {rewriteOptions.map((opt, i) => (
-                                        <div 
-                                          key={i}
-                                          onClick={() => commitRewriteOption(index, opt)}
-                                          className="bg-zinc-950 border border-zinc-700 hover:border-indigo-500 p-3 rounded-lg cursor-pointer transition-all group relative"
-                                        >
-                                          <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                                            <span className="bg-indigo-500 text-white text-[10px] uppercase font-bold px-1.5 py-0.5 rounded">Use This</span>
-                                          </div>
-                                          <p className="text-sm text-zinc-300 whitespace-pre-wrap font-mono relative z-10 pr-16">{opt}</p>
-                                        </div>
-                                      ))}
-                                    </div>
-                                  )}
+                                <div className="p-8 bg-zinc-950/40 border border-white/[0.02] rounded-3xl min-h-[160px] flex items-center">
+                                  <p className="text-lg font-black text-indigo-400 leading-tight uppercase tracking-tight">{extractedProfile.stylePrompt}</p>
                                 </div>
-                              </div>
-                            ) : (
-                              <div className="whitespace-pre-wrap text-zinc-300 text-sm leading-relaxed">
-                                {segment.text.split('\n').map((line, i) => (
-                                  <div key={i} className="flex justify-between items-start group/line py-0.5">
-                                    <span>{line}</span>
-                                    {line.trim() && !line.startsWith('[') && !line.startsWith('(') && (
-                                      <span className="text-[10px] text-zinc-600 bg-zinc-800/40 px-1.5 py-0.5 rounded opacity-50 group-hover/line:opacity-100 transition-opacity select-none font-mono tracking-tighter" title="Syllable count">
-                                        {countLineSyllables(line)}
-                                      </span>
-                                    )}
-                                  </div>
-                                ))}
+                                <p className="text-[9px] text-zinc-600 uppercase tracking-widest">Perfect for the 'Style' field in custom mode.</p>
                               </div>
                             )}
                           </div>
-                        </div>
-                      ))}
+                        </motion.div>
+                      )}
                     </div>
-                  </motion.div>
+
+                    {generatedLyrics && result && <div className="w-full h-px bg-zinc-800/30"></div>}
+
+                    {/* Lyrics Block */}
+                    {generatedLyrics && (
+                      <motion.div 
+                        initial={{ opacity: 0, y: 30 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        className="space-y-16"
+                      >
+                         <div className="bg-zinc-900/30 border border-white/[0.03] rounded-[48px] px-12 py-10 glass-card flex flex-col md:flex-row items-center justify-between gap-10">
+                          <div className="flex items-center gap-10">
+                            <div className="w-20 h-20 rounded-[28px] bg-white/[0.03] flex items-center justify-center shadow-2xl border border-white/[0.05]">
+                               <Music className="w-10 h-10 text-glow text-indigo-400" />
+                            </div>
+                            <div>
+                              <p className="text-[10px] text-indigo-500 uppercase tracking-[0.4em] font-black mb-2">Lead Vocal Pipeline</p>
+                              <h3 className="text-4xl font-black text-white tracking-tighter leading-none uppercase">{songTitle || "UNTITLED MASTER"}</h3>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-4">
+                            <button 
+                              onClick={() => handleCopy(songTitle, 'title')}
+                              className="p-5 bg-zinc-950 border border-zinc-900 rounded-[24px] text-zinc-500 hover:text-white transition-all shadow-2xl"
+                            >
+                              {copiedId === 'title' ? <Check className="w-6 h-6 text-green-500" /> : <Copy className="w-6 h-6" />}
+                            </button>
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 gap-12 px-6">
+                          {generatedLyrics.map((segment, index) => (
+                            <div key={index} className="bg-zinc-950/40 border border-white/[0.02] rounded-[48px] overflow-hidden group hover:border-indigo-500/20 transition-all duration-500 glass-card p-12">
+                              <div className="flex items-center justify-between mb-8">
+                                <span className="text-[10px] font-black text-zinc-600 uppercase tracking-[0.4em] group-hover:text-indigo-400 transition-colors">{segment.label}</span>
+                                <div className="flex gap-2">
+                                  <button 
+                                    onClick={() => { setEditingSegmentIndex(index); setSegmentEditValue(segment.text); }} 
+                                    className="opacity-0 group-hover:opacity-100 p-3 bg-zinc-900 border border-zinc-800 rounded-2xl text-zinc-500 hover:text-white transition-all shadow-xl"
+                                  >
+                                    <Edit3 className="w-5 h-5" />
+                                  </button>
+                                </div>
+                              </div>
+                              
+                              {editingSegmentIndex === index ? (
+                                 <div className="space-y-6">
+                                  <textarea
+                                    value={segmentEditValue}
+                                    onChange={(e) => setSegmentEditValue(e.target.value)}
+                                    className="w-full bg-zinc-950 border border-zinc-800 rounded-[32px] p-8 text-xl font-bold text-white focus:outline-none focus:ring-4 focus:ring-indigo-500/10 min-h-[220px]"
+                                  />
+                                  <div className="flex justify-end gap-3">
+                                     <button onClick={() => setEditingSegmentIndex(null)} className="px-6 py-3 text-[10px] font-black uppercase tracking-widest text-zinc-600 hover:text-white">Cancel</button>
+                                     <button 
+                                        onClick={() => {
+                                          const newLyrics = [...generatedLyrics];
+                                          newLyrics[index].text = segmentEditValue;
+                                          setGeneratedLyrics(newLyrics);
+                                          setEditingSegmentIndex(null);
+                                        }}
+                                        className="px-8 py-3 bg-white text-black rounded-full text-[10px] font-black uppercase tracking-widest transition-all"
+                                     >
+                                        Save Update
+                                     </button>
+                                  </div>
+                                 </div>
+                              ) : (
+                                <p className="text-2xl md:text-3xl font-black text-white leading-[1.6] whitespace-pre-wrap tracking-tight">
+                                  {segment.text}
+                                </p>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+
+                        <button
+                          onClick={() => {
+                            const text = generatedLyrics.map(s => `[${s.label}]\n${s.text}`).join('\n\n');
+                            handleCopy(text, 'master-lyrics-data');
+                          }}
+                                className="w-full py-8 bg-indigo-600 text-white rounded-[40px] font-black text-xs uppercase tracking-[0.3em] hover:scale-[1.02] active:scale-[0.98] transition-all shadow-2xl"
+                        >
+                           {copiedId === 'master-lyrics-data' ? 'COPIED MASTER PAYLOAD' : 'COPY MASTER DATA'}
+                        </button>
+                      </motion.div>
                     )}
-                  </div>
-                ) : (
-                  <div className="h-full flex flex-col items-center justify-center text-zinc-600 space-y-3 py-12">
-                    <Sparkles className="w-10 h-10 opacity-20" />
-                    <p className="text-sm">Your analysis will appear here.</p>
+
+                    {lyricsPrompt && (
+                      <div className="pt-24">
+                        <motion.div
+                          initial={{ opacity: 0 }}
+                          animate={{ opacity: 1 }}
+                          className="bg-zinc-950/80 border border-white/[0.03] rounded-[48px] overflow-hidden shadow-3xl glass-card"
+                        >
+                          <div className="px-10 py-6 border-b border-white/[0.03] flex items-center justify-between bg-white/[0.02]">
+                            <p className="text-[10px] font-black text-indigo-400 uppercase tracking-[0.4em] flex items-center gap-4">
+                              <Wand2 className="w-5 h-5" /> Musical Blueprint
+                            </p>
+                            <button
+                              onClick={() => handleCopy(lyricsPrompt, 'raw')}
+                              className="p-3 hover:bg-zinc-900 rounded-2xl text-zinc-600 hover:text-white transition-all shadow-xl"
+                            >
+                              {copiedId === 'raw' ? <Check className="w-5 h-5 text-green-400" /> : <Copy className="w-5 h-5" />}
+                            </button>
+                          </div>
+                          <div className="p-10">
+                            <p className="text-sm text-zinc-500 font-mono leading-loose whitespace-pre-wrap">
+                              {lyricsPrompt}
+                            </p>
+                          </div>
+                        </motion.div>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
-            </div>
+            )}
           </div>
         </div>
       </main>
@@ -1656,28 +1598,46 @@ export default function App() {
     <AnimatePresence>
       {isBoothMode && generatedLyrics && (
         <motion.div 
-          initial={{ opacity: 0, y: 50 }}
-          animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, y: 50 }}
-          className="fixed inset-0 z-50 bg-zinc-950 overflow-y-auto flex flex-col items-center p-8 sm:p-24 pb-64"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          className="fixed inset-0 z-50 bg-black overflow-y-auto flex flex-col items-center py-32 px-12 sm:px-32"
         >
+          <div className="fixed inset-0 bg-gradient-to-b from-indigo-500/5 to-transparent pointer-events-none" />
           <button 
             onClick={() => setIsBoothMode(false)}
-            className="fixed top-8 right-8 p-4 bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-white rounded-full transition-colors z-[60] shadow-2xl"
+            className="fixed top-12 right-12 p-6 bg-zinc-950 border border-white/[0.05] text-zinc-500 hover:text-white rounded-[24px] transition-all z-[60] shadow-3xl active:scale-95"
           >
             <X className="w-8 h-8" />
           </button>
           
-          <div className="max-w-4xl w-full mx-auto space-y-24 pt-12 relative z-50">
-             {songTitle && <h1 className="text-zinc-500 font-bold text-2xl text-center mb-12 opacity-50">{songTitle}</h1>}
+          <div className="max-w-5xl w-full mx-auto space-y-48 relative z-50">
+             <div className="text-center space-y-4 mb-32 group">
+                <p className="text-[10px] font-black text-indigo-500 uppercase tracking-[0.6em]">Recording Session</p>
+                <h1 className="text-6xl sm:text-8xl font-black text-white tracking-tighter uppercase">{songTitle || "UNTITLED MASTER"}</h1>
+             </div>
+
             {generatedLyrics.map((seg, i) => (
-              <div key={i} className="text-center">
-                <div className="text-indigo-500 font-mono text-xl sm:text-2xl font-bold mb-8 uppercase tracking-[0.3em] opacity-80">{seg.label}</div>
-                <div className="text-zinc-100 text-4xl sm:text-5xl md:text-6xl font-black leading-tight sm:leading-snug whitespace-pre-wrap tracking-tight">
+              <motion.div 
+                key={i} 
+                initial={{ opacity: 0, y: 100 }}
+                whileInView={{ opacity: 1, y: 0 }}
+                viewport={{ once: true, margin: "-100px" }}
+                className="text-center pb-24 border-b border-white/[0.02] last:border-0"
+              >
+                <div className="inline-block px-8 py-2 rounded-full bg-white/[0.03] text-indigo-400 font-black text-xs uppercase tracking-[0.5em] mb-16 border border-white/[0.05]">
+                  {seg.label}
+                </div>
+                <div className="text-zinc-100 text-5xl sm:text-7xl md:text-9xl font-black leading-[1.1] whitespace-pre-wrap tracking-tighter hyphens-auto">
                   {seg.text}
                 </div>
-              </div>
+              </motion.div>
             ))}
+            
+            <div className="h-64 flex flex-col items-center justify-center">
+               <div className="w-1 h-24 bg-gradient-to-b from-indigo-500 to-transparent" />
+               <p className="text-[10px] font-black text-indigo-500/30 uppercase tracking-[0.5em] mt-8">End of session</p>
+            </div>
           </div>
         </motion.div>
       )}

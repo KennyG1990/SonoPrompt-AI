@@ -49,6 +49,8 @@ export interface ExtractedProfile {
   chorusBehavior?: string;
   sonicDNA?: SonicDNA;
   visualPrompt?: string;
+  musicalPrompt?: string; // Long version (1000 chars)
+  stylePrompt?: string;   // Short version (< 200 chars)
 }
 
 export interface AnalysisResult {
@@ -112,7 +114,6 @@ async function getFileBase64(file: File): Promise<string> {
 async function resolveSongMetadata(url: string): Promise<string> {
   try {
     if (url.includes('youtube.com') || url.includes('youtu.be')) {
-      // Use absolute or relative path since this runs in the browser
       const res = await fetch(`/api/youtube/info?url=${encodeURIComponent(url)}`);
       if (res.ok) {
         const info = await res.json();
@@ -131,13 +132,7 @@ async function resolveSongMetadata(url: string): Promise<string> {
   return "";
 }
 
-export async function analyzeAudioFile(file: File, config: AIConfig = { provider: 'gemini' }): Promise<AnalysisResult> {
-  // OpenRouter doesn't support direct file analysis in this way easily
-  // If we wanted to, we'd need to send text-only or use a model with multimodal support
-  // For now, we fallback to Gemini or just allow it to fail gracefully
-  const base64Data = await getFileBase64(file);
-
-  const prompt = `You are an expert musicologist and AI music prompt engineer. Analyze this song in detail.
+const ANALYSIS_PROMPT_CORE = `You are an expert musicologist and AI music prompt engineer. Analyze the song in detail.
 
 Provide a comprehensive breakdown of its musical DNA, including:
 1. **Genre & Sub-genres**: Be as specific as possible.
@@ -148,17 +143,29 @@ Provide a comprehensive breakdown of its musical DNA, including:
 6. **Mood & Vibe**: The overall atmosphere and emotional resonance.
 7. **Production Quality**: Lo-fi, polished, wall-of-sound, intimate, etc.
 
-Finally, provide a highly optimized **Music Generator Prompt** (for tools like Suno or Udio) that uses these characteristics to generate a NEW song that sounds like it belongs on the same album or is by the same artist. 
+DYNAMIC VARIABLE GENERATION:
+For the "profile" variables below, you MUST CHOOSE FRESHLY and INTERNALLY before writing. Do NOT default to "dimly lit room" or "intimate" unless the song absolutely demands it. Avoid clichés.
+1. a distinct environment (be specific: rainy highway, neon-drenched arcade, silent desert, etc.)
+2. a relationship dynamic with clear tension or risk
+3. one dominant emotional flavor
+4. one recurring physical motif
+5. one sensory palette
+6. one chorus behavior
 
-Make this prompt highly comprehensive (up to about 1000 characters). You MUST include a combination of the general sonic summary, but crucially, include almost verbatim EVERYTHING you extract for the "profile" object (Environment, Sensory Palette, Physical Motif, Chorus Behavior, Vocal Persona, Emotional Tone, etc.) directly inside the Music Generator Prompt. Structure it like so: "[comma-separated sonic summary/genres/production]. Atmosphere & Environment: [Environment + Mood details]. Sensory & Physical Details: [Sensory Palette + Physical Motif]. Delivery/Timbre: [Vocal Style + Chorus Behavior]."
+PROMPT GENERATION:
+1. Provide a highly optimized **Music Generator Prompt** (up to 1000 characters). Include the general sonic summary and verbatim inclusions of your chosen Environment, Sensory Palette, Physical Motif, Chorus Behavior, Vocal Persona, and Emotional Tone.
+2. Provide a **Style Prompt** (STRICTLY under 200 characters) optimized for Suno/Udio. This must be a comma-separated list of genres, moods, and key sonic descriptors.
 
 CRITICAL RESPONSE FORMAT:
 You MUST return your response as a strict JSON object with exactly two keys:
-1. "markdown": A fully formatted markdown string containing your detailed 7-point musical analysis and the final Music Generator Prompt.
+1. "markdown": A fully formatted markdown string containing your detailed 7-point musical analysis and both generator prompts.
 2. "profile": A nested JSON object containing strictly the following string keys: 
-   - "vocalPersona", "emotionalTone", "relationshipDynamic", "lyricalDensity", "environment", "sensoryPalette", "physicalMotif", "chorusBehavior" (Strings)
+   - "vocalPersona", "emotionalTone", "relationshipDynamic", "lyricalDensity", "environment", "sensoryPalette", "physicalMotif", "chorusBehavior", "musicalPrompt", "stylePrompt" (Strings)
    - "sonicDNA": { "energy": 0-100, "rhythmicComplexity": 0-100, "emotionalDarkness": 0-100, "vocalClarity": 0-100, "productionPolish": 0-100 }
-   - "visualPrompt": A descriptive 2-line prompt for an image generator like Midjourney or DALL-E that captures the song's "visual mood" and "sensory palette" (no artist names, just vibes and aesthetics).`;
+   - "visualPrompt": A descriptive 2-line prompt for an image generator (no artist names, just vibes).`;
+
+export async function analyzeAudioFile(file: File, config: AIConfig = { provider: 'gemini' }): Promise<AnalysisResult> {
+  const base64Data = await getFileBase64(file);
 
   const response = await withRetry(() => ai.models.generateContent({
     model: "gemini-3.1-pro-preview",
@@ -171,7 +178,7 @@ You MUST return your response as a strict JSON object with exactly two keys:
           },
         },
         {
-          text: prompt,
+          text: ANALYSIS_PROMPT_CORE,
         },
       ],
     },
@@ -187,11 +194,11 @@ You MUST return your response as a strict JSON object with exactly two keys:
     const parsed = JSON.parse(jsonStr);
     return {
       markdown: parsed.markdown || "Analysis failed.",
-      profile: parsed.profile || { vocalPersona: "", emotionalTone: "", relationshipDynamic: "", lyricalDensity: "", environment: "", sensoryPalette: "", physicalMotif: "", chorusBehavior: "" }
+      profile: parsed.profile || { vocalPersona: "", emotionalTone: "", relationshipDynamic: "", lyricalDensity: "", environment: "", sensoryPalette: "", physicalMotif: "", chorusBehavior: "", musicalPrompt: "", stylePrompt: "" }
     };
   } catch (e) {
     console.error("Failed to parse JSON response:", e);
-    return { markdown: response.text || "Failed to parse analysis.", profile: { vocalPersona: "", emotionalTone: "", relationshipDynamic: "", lyricalDensity: "", environment: "", sensoryPalette: "", physicalMotif: "", chorusBehavior: "" } };
+    return { markdown: response.text || "Failed to parse analysis.", profile: { vocalPersona: "", emotionalTone: "", relationshipDynamic: "", lyricalDensity: "", environment: "", sensoryPalette: "", physicalMotif: "", chorusBehavior: "", musicalPrompt: "", stylePrompt: "" } };
   }
 }
 
@@ -270,31 +277,12 @@ Finally, provide a highly optimized **"Delta" Music Generator Prompt** (for tool
 export async function analyzeSongLink(linkOrName: string, config: AIConfig = { provider: 'gemini' }): Promise<AnalysisResult> {
   const isUrl = linkOrName.includes('http');
   const metadataAddition = isUrl ? await resolveSongMetadata(linkOrName) : "";
-  let prompt = `You are an expert musicologist and AI music prompt engineer. Analyze the song at this link or with this name: "${linkOrName}".
+  let prompt = `Analyze the song at this link or with this name: "${linkOrName}".
   ${metadataAddition}
   
 CRITICAL INSTRUCTION: If a URL (like a YouTube or Spotify link) is provided, use the SYSTEM METADATA RESOLUTION tag if present to identify the song. Base your analysis completely on the real-world song identified. DO NOT guess or hallucinate the song based purely on the URL string.
 
-Provide a comprehensive breakdown of its musical DNA, including:
-1. **Genre & Sub-genres**: Be as specific as possible.
-2. **Tempo & Rhythm**: BPM (approximate), time signature, groove, and rhythmic feel.
-3. **Musical Structure**: Verse/chorus progression, bridge characteristics, intro/outro, and overall arrangement.
-4. **Instrumentation**: Key instruments, synthesizers, drum machines, or acoustic elements.
-5. **Vocal Style**: Timbre, delivery, effects (e.g., reverb, autotune), and emotional tone.
-6. **Mood & Vibe**: The overall atmosphere and emotional resonance.
-7. **Production Quality**: Lo-fi, polished, wall-of-sound, intimate, etc.
-
-Finally, provide a highly optimized **Music Generator Prompt** (for tools like Suno or Udio) that uses these characteristics to generate a NEW song that sounds like it belongs on the same album or is by the same artist. 
-
-Make this prompt highly comprehensive (up to about 1000 characters). You MUST include a combination of the general sonic summary, but crucially, include almost verbatim EVERYTHING you extract for the "profile" object (Environment, Sensory Palette, Physical Motif, Chorus Behavior, Vocal Persona, Emotional Tone, etc.) directly inside the Music Generator Prompt. Structure it like so: "[comma-separated sonic summary/genres/production]. Atmosphere & Environment: [Environment + Mood details]. Sensory & Physical Details: [Sensory Palette + Physical Motif]. Delivery/Timbre: [Vocal Style + Chorus Behavior]."
-
-CRITICAL RESPONSE FORMAT:
-You MUST return your response as a strict JSON object with exactly two keys:
-1. "markdown": A fully formatted markdown string containing your detailed 7-point musical analysis and the final Music Generator Prompt.
-2. "profile": A nested JSON object containing strictly the following string keys: 
-   - "vocalPersona", "emotionalTone", "relationshipDynamic", "lyricalDensity", "environment", "sensoryPalette", "physicalMotif", "chorusBehavior" (Strings)
-   - "sonicDNA": { "energy": 0-100, "rhythmicComplexity": 0-100, "emotionalDarkness": 0-100, "vocalClarity": 0-100, "productionPolish": 0-100 }
-   - "visualPrompt": A descriptive 2-line prompt for an image generator like Midjourney or DALL-E that captures the song's "visual mood" and "sensory palette" (no artist names, just vibes and aesthetics).`;
+` + ANALYSIS_PROMPT_CORE;
 
   // Attempt to fetch actual audio so Gemini isn't operating blind
   let audioData: { data: string, mimeType: string } | null = null;
@@ -339,11 +327,11 @@ You MUST use your internal training data and your Google Search tool to identify
       const parsed = JSON.parse(jsonStr);
       return {
         markdown: parsed.markdown || "Analysis failed.",
-        profile: parsed.profile || { vocalPersona: "", emotionalTone: "", relationshipDynamic: "", lyricalDensity: "", environment: "", sensoryPalette: "", physicalMotif: "", chorusBehavior: "" }
+        profile: parsed.profile || { vocalPersona: "", emotionalTone: "", relationshipDynamic: "", lyricalDensity: "", environment: "", sensoryPalette: "", physicalMotif: "", chorusBehavior: "", musicalPrompt: "", stylePrompt: "" }
       };
     } catch (e) {
       console.error("OpenRouter parse failed", e);
-      return { markdown: text || "Failed to parse analysis.", profile: { vocalPersona: "", emotionalTone: "", relationshipDynamic: "", lyricalDensity: "", environment: "", sensoryPalette: "", physicalMotif: "", chorusBehavior: "" } };
+      return { markdown: text || "Failed to parse analysis.", profile: { vocalPersona: "", emotionalTone: "", relationshipDynamic: "", lyricalDensity: "", environment: "", sensoryPalette: "", physicalMotif: "", chorusBehavior: "", musicalPrompt: "", stylePrompt: "" } };
     }
   }
 
@@ -373,11 +361,11 @@ You MUST use your internal training data and your Google Search tool to identify
     const parsed = JSON.parse(jsonStr);
     return {
       markdown: parsed.markdown || "Analysis failed.",
-      profile: parsed.profile || { vocalPersona: "", emotionalTone: "", relationshipDynamic: "", lyricalDensity: "", environment: "", sensoryPalette: "", physicalMotif: "", chorusBehavior: "" }
+      profile: parsed.profile || { vocalPersona: "", emotionalTone: "", relationshipDynamic: "", lyricalDensity: "", environment: "", sensoryPalette: "", physicalMotif: "", chorusBehavior: "", musicalPrompt: "", stylePrompt: "" }
     };
   } catch (e) {
     console.error("Failed to parse JSON response:", e);
-    return { markdown: response.text || "Failed to parse analysis.", profile: { vocalPersona: "", emotionalTone: "", relationshipDynamic: "", lyricalDensity: "", environment: "", sensoryPalette: "", physicalMotif: "", chorusBehavior: "" } };
+    return { markdown: response.text || "Failed to parse analysis.", profile: { vocalPersona: "", emotionalTone: "", relationshipDynamic: "", lyricalDensity: "", environment: "", sensoryPalette: "", physicalMotif: "", chorusBehavior: "", musicalPrompt: "", stylePrompt: "" } };
   }
 }
 
@@ -526,12 +514,21 @@ Analyze the provided reference song to understand its structure, rhythm, mood, g
 
 CRITICAL INSTRUCTION: If a URL (like a YouTube or Spotify link) is provided as the Reference Song, use the SYSTEM METADATA RESOLUTION tag if present to identify the song. Base your analysis completely on the real-world song identified. DO NOT guess or hallucinate the song based purely on the URL string.
 
+DYNAMIC VARIABLE GENERATION:
+You MUST CHOOSE FRESHLY and INTERNALLY before writing. Do NOT default to "dimly lit room" or "intimate" unless the song absolutely demands it. Avoid clichés.
+1. a distinct environment (be specific: rainy highway, neon-drenched arcade, silent desert, etc.)
+2. a relationship dynamic with clear tension or risk
+3. one dominant emotional flavor
+4. one recurring physical motif
+5. one sensory palette
+6. one chorus behavior
+
 Based on your analysis, you must generate the following for a NEW song:
 
 1. "analysis": A detailed paragraph analyzing the original song, specifically highlighting the vocal description and how it drives the emotion.
 2. "lyrics": Write original lyrics formatted with section headers (e.g., [Verse 1], [Chorus]) that match the structural style of the reference song. The THEME and EMOTION of these new lyrics MUST be based entirely on the vocal description you just analyzed.
 3. "title": A catchy, fitting title for the new song based on the lyrics.
-4. "prompt": A Song Description describing the musical DNA, mood, and vocal style (for an AI music generator). You MUST explicitly include all environmental and songwriter profile details (e.g., Environment, Sensory Palette, Physical Motif, Chorus Behavior, Vocal Persona) seamlessly within this prompt string.
+4. "prompt": A Song Description (up to 1000 characters) describing the musical DNA, mood, and vocal style. You MUST explicitly include all environmental and songwriter profile details (Environment, Sensory Palette, Physical Motif, Chorus Behavior, Vocal Persona) seamlessly within this prompt string.
 5. "styleTags": Comma-separated genres and vibes (e.g., "synthwave, 80s, dark"). MUST ONLY CONTAIN ALPHANUMERIC CHARACTERS AND SPACES. NO SPECIAL CHARACTERS LIKE & OR -.
 
 Return the result STRICTLY as a JSON object with the keys: "title", "prompt", "styleTags", "lyrics", and "analysis".`;
