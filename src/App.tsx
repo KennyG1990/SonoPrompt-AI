@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect } from 'react';
-import { Upload, Link as LinkIcon, Music, Loader2, Sparkles, RefreshCw, AlertCircle, GitCompare, X, FileText, Wand2, Edit3, Check, LayoutDashboard, Youtube, Download, Save, Trash2, Copy, Mic, Settings, ExternalLink, ChevronDown, Search, Plus, Settings2, Library, Activity, Monitor } from 'lucide-react';
+import { Upload, Link as LinkIcon, Music, Loader2, Sparkles, RefreshCw, AlertCircle, GitCompare, X, FileText, Wand2, Edit3, Check, LayoutDashboard, Youtube, Download, Save, Trash2, Copy, Mic, Settings, ExternalLink, ChevronDown, Search, Plus, Settings2, Library, Activity, Monitor, Radio } from 'lucide-react';
 import { useDropzone } from 'react-dropzone';
 import ReactMarkdown from 'react-markdown';
 import { motion, AnimatePresence } from 'motion/react';
@@ -47,6 +47,7 @@ export default function App() {
   const [instrumentalPacing, setInstrumentalPacing] = useState('default');
   const [lockSyllables, setLockSyllables] = useState(false);
   const [generatedLyrics, setGeneratedLyrics] = useState<LyricSegment[] | null>(null);
+  const [lyricsExcerpt, setLyricsExcerpt] = useState<string | null>(null);
   const [lyricsPrompt, setLyricsPrompt] = useState<string | null>(null);
   const [songTitle, setSongTitle] = useState<string | null>(null);
   const [editingSegmentIndex, setEditingSegmentIndex] = useState<number | null>(null);
@@ -72,6 +73,7 @@ export default function App() {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [result, setResult] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
 
   // YouTube Downloader state
   const [ytLink, setYtLink] = useState('');
@@ -280,6 +282,8 @@ export default function App() {
       // Keep result intact so they can be viewed simultaneously
     }
 
+    setError(null);
+    setSuccess(null);
     setIsAnalyzing(true);
     setCurrentAction(action);
 
@@ -302,8 +306,8 @@ export default function App() {
 
           let extractedTheme = lyricsTheme;
           // Auto-populate lyrics theme from extracted profile if empty
-          if (!extractedTheme && analysisData.profile && (analysisData.profile.emotionalTone || analysisData.profile.vocalPersona)) {
-             extractedTheme = `Vocal Persona: ${analysisData.profile.vocalPersona} | Tone: ${analysisData.profile.emotionalTone}`;
+          if (!extractedTheme && analysisData.profile && (analysisData.profile.emotionalTone || analysisData.profile.vocalPersona || analysisData.profile.lyricalTheme)) {
+             extractedTheme = analysisData.profile.lyricalTheme || `Vocal Persona: ${analysisData.profile.vocalPersona} | Tone: ${analysisData.profile.emotionalTone}`;
              setLyricsTheme(extractedTheme);
           }
         } else {
@@ -332,35 +336,42 @@ export default function App() {
           s = { type: 'link', link: analyzeLink.trim() };
         }
 
-        if (s && (lyricsTheme.trim() || extractedProfile)) {
-          const lyrics = await generateLyrics(
-            s, 
-            lyricsTheme.trim() || "A new song matching the core emotion", 
-            lyricistPersonality, 
-            extractedProfile || undefined, 
-            visualAnchor.trim() || undefined, 
-            customStructure.trim() || undefined, 
-            injectVocalTags, 
-            rhymeComplexity, 
-            emotionalArc, 
-            instrumentalPacing,
-            currentAIConfig
-          );
-          setGeneratedLyrics(lyrics.segments);
-          setLyricsPrompt(lyrics.prompt);
-          
-          // Automatically suggest title after lyrics generation
-          setIsGeneratingTitle(true);
-          try {
-            const title = await suggestSongTitle(s, lyrics.segments, currentAIConfig);
-            setSongTitle(title);
-          } catch (e) {
-            console.error("Failed to generate title", e);
-          } finally {
-            setIsGeneratingTitle(false);
-          }
-        } else {
-          setError('Please provide a song and a theme/mood.');
+        if (!s) {
+          setError('Please provide a reference song first (Link or Upload).');
+          setIsAnalyzing(false);
+          setCurrentAction(null);
+          return;
+        }
+
+        // If no theme provided, we use a default or the extracted profile if available
+        const theme = lyricsTheme.trim() || (extractedProfile ? `A new song matching the style of ${extractedProfile.vocalPersona}` : "A new song in this style");
+
+        const lyrics = await generateLyrics(
+          s, 
+          theme, 
+          lyricistPersonality, 
+          extractedProfile || undefined, 
+          visualAnchor.trim() || undefined, 
+          customStructure.trim() || undefined, 
+          injectVocalTags, 
+          rhymeComplexity, 
+          emotionalArc, 
+          instrumentalPacing,
+          currentAIConfig
+        );
+        setGeneratedLyrics(lyrics.segments);
+        setLyricsExcerpt(lyrics.excerpt || null);
+        setLyricsPrompt(lyrics.prompt);
+        
+        // Automatically suggest title after lyrics generation
+        setIsGeneratingTitle(true);
+        try {
+          const title = await suggestSongTitle(s, lyrics.segments, currentAIConfig);
+          setSongTitle(title);
+        } catch (e) {
+          console.error("Failed to generate title", e);
+        } finally {
+          setIsGeneratingTitle(false);
         }
       }
     } catch (err: any) {
@@ -406,9 +417,11 @@ export default function App() {
     setInstrumentalPacing('default');
     setResult(null);
     setGeneratedLyrics(null);
+    setLyricsExcerpt(null);
     setLyricsPrompt(null);
     setSongTitle(null);
     setError(null);
+    setSuccess(null);
     setCopiedId(null);
     setRewriteOptions(null);
     setMoodVisualUrl(null);
@@ -428,6 +441,44 @@ export default function App() {
       setGeneratedLyrics(newLyrics);
     }
     setEditingSegmentIndex(null);
+  };
+
+  const handleRegenerateSegment = async (index: number) => {
+    if (!generatedLyrics) return;
+    
+    let s: SongInput | null = analyzeSong;
+    if (analyzeInputType === 'link' && analyzeLink.trim()) {
+      s = { type: 'link', link: analyzeLink.trim() };
+    }
+    if (!s) return;
+
+    setRewritingSegmentIndex(index);
+    setIsGeneratingRewrite(true);
+    setRewriteOptions(null);
+    setRewriteInstruction('Regenerate this section to be fresh, original, and lyrically compelling while strictly maintaining the flow and narrative context of the entire song.');
+
+    try {
+      const options = await rewriteLyricSegment(
+        s, 
+        generatedLyrics, 
+        index, 
+        'Regenerate this section to be fresh, original, and lyrically compelling while strictly maintaining the flow and narrative context of the entire song.', 
+        lyricistPersonality, 
+        lockSyllables, 
+        rhymeComplexity,
+        currentAIConfig
+      );
+      setRewriteOptions(options);
+    } catch (err: any) {
+      console.error(err);
+      if (err.message?.includes('429')) {
+        setError('The Songwriter is currently overloaded. Please wait 60 seconds and try again. (Quota Exceeded)');
+      } else {
+        setError("Failed to regenerate section.");
+      }
+    } finally {
+      setIsGeneratingRewrite(false);
+    }
   };
 
   const handleRewriteSegment = async (index: number) => {
@@ -517,9 +568,198 @@ export default function App() {
     }
   };
 
-  const handleDownloadYt = () => {
+  const [isDownloading, setIsDownloading] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordingProgress, setRecordingProgress] = useState(0);
+  const [audioLevel, setAudioLevel] = useState(0);
+  const [recordingInfo, setRecordingInfo] = useState<{ title: string, author: string } | null>(null);
+
+  const handleDownloadYt = async () => {
     if (!ytLink.trim()) return;
-    window.location.href = `/api/youtube/download?url=${encodeURIComponent(ytLink.trim())}`;
+    setIsDownloading(true);
+    setError(null);
+    setSuccess(null);
+    
+    try {
+      const checkRes = await fetch(`/api/youtube/info?url=${encodeURIComponent(ytLink.trim())}`);
+      if (!checkRes.ok) throw new Error("Song not found or inaccessible.");
+      const info = await checkRes.json();
+      
+      const safeTitle = (info.title || 'song').replace(/[/\\?%*:|"<>]/g, '-');
+      const downloadUrl = `/api/youtube/download?url=${encodeURIComponent(ytLink.trim())}`;
+      
+      // Trigger Direct Server Extraction (Fast)
+      const link = document.createElement('a');
+      link.href = downloadUrl;
+      link.download = `${safeTitle}.mp3`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      
+      setSuccess(`Direct Studio Extraction initiated for "${info.title}". Check your downloads.`);
+    } catch (err: any) {
+      setError(`Extraction Failed: ${err.message}. Try another song.`);
+    } finally {
+      setIsDownloading(false);
+    }
+  };
+
+  const handleCaptureLive = async () => {
+    if (!ytLink.trim()) return;
+    setIsDownloading(true);
+    setError(null);
+    setSuccess(null);
+    
+    try {
+      const checkRes = await fetch(`/api/youtube/info?url=${encodeURIComponent(ytLink.trim())}`);
+      if (!checkRes.ok) throw new Error("Song not found.");
+      const info = await checkRes.json();
+      
+      if (info.streamUrl) {
+        setRecordingInfo({ title: info.title, author: info.author });
+        startRecording(info.streamUrl, info.title);
+      } else {
+        // One last attempt: maybe we can get it manually now
+        const retryRes = await fetch(`/api/youtube/info?url=${encodeURIComponent(ytLink.trim())}`);
+        const retryInfo = await retryRes.json();
+        if (retryInfo.streamUrl) {
+           setRecordingInfo({ title: retryInfo.title, author: retryInfo.author });
+           startRecording(retryInfo.streamUrl, retryInfo.title);
+        } else {
+           throw new Error("Extreme YouTube throttling detected. Live stream capture is temporarily locked. Try Direct Studio Extraction instead.");
+        }
+      }
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setIsDownloading(false);
+    }
+  };
+
+  const startRecording = async (streamUrl: string, title: string) => {
+    setIsRecording(true);
+    setRecordingProgress(0);
+    setAudioLevel(0);
+    
+    try {
+      const audio = new Audio();
+      audio.crossOrigin = "anonymous";
+      audio.src = `/api/youtube/stream-proxy?url=${encodeURIComponent(streamUrl)}`;
+      
+      const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      
+      if (audioCtx.state === 'suspended') {
+        await audioCtx.resume();
+      }
+
+      const source = audioCtx.createMediaElementSource(audio);
+      const destination = audioCtx.createMediaStreamDestination();
+      
+      const analyser = audioCtx.createAnalyser();
+      analyser.fftSize = 256;
+      const bufferLength = analyser.frequencyBinCount;
+      const dataArray = new Uint8Array(bufferLength);
+      
+      source.connect(analyser);
+      source.connect(destination);
+      source.connect(audioCtx.destination); 
+
+      let isCaptured = true;
+      const updateSignal = () => {
+        if (!isCaptured || audioCtx.state === 'closed') return;
+        analyser.getByteFrequencyData(dataArray);
+        let sum = 0;
+        for (let i = 0; i < bufferLength; i++) sum += dataArray[i];
+        const level = sum / bufferLength;
+        setAudioLevel(level);
+        requestAnimationFrame(updateSignal);
+      };
+      updateSignal();
+
+      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') 
+        ? 'audio/webm;codecs=opus' 
+        : 'audio/ogg;codecs=opus';
+        
+      const recorder = new MediaRecorder(destination.stream, { mimeType });
+      const chunks: Blob[] = [];
+
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) {
+          chunks.push(e.data);
+        }
+      };
+
+      const finalizeRecording = () => {
+        if (recorder.state !== 'inactive') {
+          recorder.stop();
+        }
+        audio.pause();
+        audioCtx.close();
+        isCaptured = false;
+      };
+
+      recorder.onstop = () => {
+        isCaptured = false;
+        setAudioLevel(0);
+        if (chunks.length === 0 || chunks[0].size < 1000) {
+          setError("Silent Capture: No audio data detected in the stream. Try Direct Studio Extraction.");
+          setIsRecording(false);
+          setRecordingInfo(null);
+          return;
+        }
+
+        const blob = new Blob(chunks, { type: mimeType });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        const safeTitle = title.replace(/[/\\?%*:|"<>]/g, '-') || 'studio-extract';
+        a.download = `${safeTitle}.webm`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        
+        setIsRecording(false);
+        setRecordingInfo(null);
+        setSuccess(`" ${title} " captured and saved to your device.`);
+      };
+
+      audio.onplay = () => {
+        recorder.start(1000); 
+        
+        setTimeout(() => {
+          if (audioLevel < 0.5 && isRecording) {
+            setError("Low Signal: The stream seems to be silent. This is likely a YouTube CDN block.");
+          }
+        }, 8000);
+      };
+
+      audio.onerror = (e) => {
+        setError("Stream Failed: YouTube blocked this specific CDN server. Try another track.");
+        if (recorder.state === 'recording') recorder.stop();
+      };
+
+      audio.ontimeupdate = () => {
+        if (audio.duration && audio.duration !== Infinity) {
+          setRecordingProgress((audio.currentTime / audio.duration) * 100);
+        } else {
+          setRecordingProgress(prev => (prev + 0.05) % 100);
+        }
+      };
+
+      audio.onended = () => {
+        finalizeRecording();
+      };
+
+      // Expose manual stop
+      (window as any).stopStudioRecording = finalizeRecording;
+
+      await audio.play();
+    } catch (err: any) {
+      console.error("Recording error:", err);
+      setError("Failed to start stream recorder. Using fallback...");
+      setIsRecording(false);
+    }
   };
 
   const updateProfileField = (key: keyof ExtractedProfile, value: string) => {
@@ -760,7 +1000,7 @@ export default function App() {
                             list="openrouter-models"
                             value={openRouterAnalysisModel}
                             onChange={(e) => setOpenRouterAnalysisModel(e.target.value)}
-                            placeholder="auto (gemini-1.5-flash)"
+                            placeholder="auto (gemini-3-flash-preview)"
                             className="w-full bg-zinc-950 border border-zinc-800 rounded-xl pl-10 pr-10 py-3 text-sm text-zinc-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/50"
                           />
                           <div className="absolute inset-y-0 right-3 flex items-center pointer-events-none text-zinc-500">
@@ -768,7 +1008,7 @@ export default function App() {
                           </div>
                         </div>
                         <p className="text-[10px] text-zinc-600 mt-1.5">
-                          Selected: <span className="text-zinc-400">{openRouterAnalysisModel === 'auto' ? 'google/gemini-1.5-flash' : openRouterAnalysisModel}</span>
+                          Selected: <span className="text-zinc-400">{openRouterAnalysisModel === 'auto' ? 'google/gemini-3-flash-preview' : openRouterAnalysisModel}</span>
                         </p>
                       </div>
 
@@ -813,7 +1053,7 @@ export default function App() {
                     className="p-4 bg-indigo-500/5 border border-indigo-500/20 rounded-xl"
                   >
                     <p className="text-sm text-indigo-300">
-                      Using the default <span className="font-semibold text-white">Gemini 1.5 Flash</span> models via the server backend.
+                      Using the default <span className="font-semibold text-white">Gemini 3 Flash</span> models via the server backend.
                     </p>
                   </motion.div>
                 )}
@@ -982,153 +1222,147 @@ export default function App() {
                   />
                 </div>
                 
-                {extractedProfile && (
+                  {/* Expert Settings / Songwriter Profile Options */}
                   <div className="space-y-4 border-t border-zinc-800/50 pt-8 mt-4">
-                    <button 
-                      onClick={() => setIsExpertSettingsOpen(!isExpertSettingsOpen)}
-                      className="w-full flex items-center justify-between group py-2"
-                    >
-                      <h3 className="text-[10px] font-black text-indigo-400 uppercase tracking-[0.2em] flex items-center gap-3">
-                        <div className="w-8 h-8 rounded-lg bg-indigo-500/5 flex items-center justify-center text-indigo-400 group-hover:scale-110 transition-transform">
-                          <Settings2 className="w-4 h-4" />
-                        </div>
-                        Creative DNA Engine
-                      </h3>
-                      <div className={`transition-transform duration-300 ${isExpertSettingsOpen ? 'rotate-180' : ''}`}>
-                         <RefreshCw className="w-4 h-4 text-zinc-700" />
+                    <div className="flex items-center gap-3 mb-4">
+                      <div className="w-8 h-8 rounded-lg bg-indigo-500/5 flex items-center justify-center text-indigo-400">
+                        <Settings2 className="w-4 h-4" />
                       </div>
-                    </button>
+                      <h3 className="text-[10px] font-black text-indigo-400 uppercase tracking-[0.2em]">Creative DNA Engine</h3>
+                    </div>
 
-                    <AnimatePresence>
-                      {isExpertSettingsOpen && (
-                        <motion.div
-                          initial={{ opacity: 0, height: 0 }}
-                          animate={{ opacity: 1, height: 'auto' }}
-                          exit={{ opacity: 0, height: 0 }}
-                          className="overflow-hidden"
-                        >
-                          <div className="space-y-6 pt-4 pb-2">
-                            <div className="grid grid-cols-2 gap-4">
-                              <div className="space-y-2">
-                                <label className="block text-[9px] font-black text-zinc-600 uppercase tracking-widest pl-1">Vocal Persona</label>
-                                <input type="text" value={extractedProfile.vocalPersona} onChange={(e) => updateProfileField('vocalPersona', e.target.value)} className="w-full bg-zinc-950/30 border border-zinc-800/80 rounded-xl px-4 py-2 text-sm text-zinc-300 focus:outline-none focus:border-indigo-500 transition-colors" />
-                              </div>
-                              <div className="space-y-2">
-                                <label className="block text-[9px] font-black text-zinc-600 uppercase tracking-widest pl-1">Emotional Tone</label>
-                                <input type="text" value={extractedProfile.emotionalTone} onChange={(e) => updateProfileField('emotionalTone', e.target.value)} className="w-full bg-zinc-950/30 border border-zinc-800/80 rounded-xl px-4 py-2 text-sm text-zinc-300 focus:outline-none focus:border-indigo-500 transition-colors" />
-                              </div>
-                            </div>
+                    <div className="space-y-6">
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <label className="block text-[9px] font-black text-zinc-600 uppercase tracking-widest pl-1">Rhyme Scheme</label>
+                          <select 
+                            value={rhymeComplexity} 
+                            onChange={(e) => setRhymeComplexity(e.target.value)}
+                            className="w-full bg-zinc-950 text-indigo-400 border border-zinc-800 rounded-xl px-3 py-2.5 text-xs focus:outline-none focus:border-indigo-500 appearance-none font-bold"
+                          >
+                            <option value="default">NATURAL (AABB/ABAB)</option>
+                            <option value="slant">MODERN / SLANT RHYME</option>
+                            <option value="multi">COMPLEX / MULTI-SYLLABIC</option>
+                            <option value="narrative">FREE VERSE / NARRATIVE</option>
+                          </select>
+                        </div>
+                        <div className="space-y-2">
+                          <label className="block text-[9px] font-black text-zinc-600 uppercase tracking-widest pl-1">Emotional Arc</label>
+                          <select 
+                            value={emotionalArc} 
+                            onChange={(e) => setEmotionalArc(e.target.value)}
+                            className="w-full bg-zinc-950 text-indigo-400 border border-zinc-800 rounded-xl px-3 py-2.5 text-xs focus:outline-none focus:border-indigo-500 appearance-none font-bold"
+                          >
+                            <option value="static">STATIC (STABLE)</option>
+                            <option value="upward">UPWARD ARC (CLIMAX)</option>
+                            <option value="downward">DOWNWARD SPIRAL</option>
+                            <option value="waves">WAVES (OSCILLATING)</option>
+                            <option value="climax">CENTERED CLIMAX</option>
+                          </select>
+                        </div>
+                      </div>
 
-                            <div className="grid grid-cols-2 gap-4">
-                              <div className="space-y-2">
-                                <label className="block text-[9px] font-black text-zinc-600 uppercase tracking-widest pl-1">Relationship</label>
-                                <input type="text" value={extractedProfile.relationshipDynamic || ''} onChange={(e) => updateProfileField('relationshipDynamic', e.target.value)} placeholder="Tension, intimacy..." className="w-full bg-zinc-950/30 border border-zinc-800/80 rounded-xl px-4 py-2 text-sm text-zinc-300 focus:outline-none focus:border-indigo-500 transition-colors" />
-                              </div>
-                              <div className="space-y-2">
-                                <label className="block text-[9px] font-black text-zinc-600 uppercase tracking-widest pl-1">Lyrical Density</label>
-                                <input type="text" value={extractedProfile.lyricalDensity || ''} onChange={(e) => updateProfileField('lyricalDensity', e.target.value)} placeholder="Sparse, dense..." className="w-full bg-zinc-950/30 border border-zinc-800/80 rounded-xl px-4 py-2 text-sm text-zinc-300 focus:outline-none focus:border-indigo-500 transition-colors" />
-                              </div>
-                            </div>
-                            
-                            <div className="space-y-4">
-                              <div className="space-y-2">
-                                <label className="block text-[9px] font-black text-zinc-600 uppercase tracking-widest pl-1">Environment</label>
-                                <input type="text" value={extractedProfile.environment || ''} onChange={(e) => updateProfileField('environment', e.target.value)} placeholder="Neon-drenched hallway..." className="w-full bg-zinc-950/30 border border-zinc-800/80 rounded-xl px-4 py-2 text-sm text-zinc-300 focus:outline-none focus:border-indigo-500 transition-colors" />
-                              </div>
-                              <div className="space-y-2">
-                                <label className="block text-[9px] font-black text-zinc-600 uppercase tracking-widest pl-1">Sensory Palette</label>
-                                <input type="text" value={extractedProfile.sensoryPalette || ''} onChange={(e) => updateProfileField('sensoryPalette', e.target.value)} placeholder="Ozone, cold rain..." className="w-full bg-zinc-950/30 border border-zinc-800/80 rounded-xl px-4 py-2 text-sm text-zinc-300 focus:outline-none focus:border-indigo-500 transition-colors" />
-                              </div>
-                            </div>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <label className="block text-[9px] font-black text-zinc-600 uppercase tracking-widest pl-1">Instrumental Pacing</label>
+                          <select 
+                            value={instrumentalPacing} 
+                            onChange={(e) => setInstrumentalPacing(e.target.value)}
+                            className="w-full bg-zinc-950 text-indigo-400 border border-zinc-800 rounded-xl px-3 py-2.5 text-xs focus:outline-none focus:border-indigo-500 appearance-none font-bold"
+                          >
+                            <option value="default">STANDARD</option>
+                            <option value="balanced">BALANCED BREAKS</option>
+                            <option value="cinematic">CINEMATIC / SPACIOUS</option>
+                          </select>
+                        </div>
+                        <div className="space-y-2">
+                          <label className="block text-[9px] font-black text-zinc-600 uppercase tracking-widest pl-1">Audio Tags</label>
+                          <button
+                            onClick={() => setInjectVocalTags(!injectVocalTags)}
+                            className={`w-full py-2.5 px-4 rounded-xl text-[10px] font-black transition-all border ${
+                              injectVocalTags 
+                                ? 'bg-indigo-500 text-white border-indigo-400 shadow-[0_0_15px_rgba(99,102,241,0.3)]' 
+                                : 'bg-zinc-950 border-zinc-800 text-zinc-600 hover:border-zinc-700'
+                            }`}
+                          >
+                            {injectVocalTags ? 'TAG_ENGINE_ON' : 'TAG_ENGINE_OFF'}
+                          </button>
+                        </div>
+                      </div>
 
-                            <div className="grid grid-cols-2 gap-4">
-                              <div className="space-y-2">
-                                <label className="block text-[9px] font-black text-zinc-600 uppercase tracking-widest pl-1">Rhyme Scheme</label>
-                                <select 
-                                  value={rhymeComplexity} 
-                                  onChange={(e) => setRhymeComplexity(e.target.value)}
-                                  className="w-full bg-zinc-950 text-indigo-400 border border-zinc-800 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-indigo-500 appearance-none font-bold"
-                                >
-                                  <option value="default">NATURAL (AABB/ABAB)</option>
-                                  <option value="slant">MODERN / SLANT RHYME</option>
-                                  <option value="multi">COMPLEX / MULTI-SYLLABIC</option>
-                                </select>
-                              </div>
-                              <div className="space-y-2">
-                                <label className="block text-[9px] font-black text-zinc-600 uppercase tracking-widest pl-1">Emotional Arc</label>
-                                <select 
-                                  value={emotionalArc} 
-                                  onChange={(e) => setEmotionalArc(e.target.value)}
-                                  className="w-full bg-zinc-950 text-indigo-400 border border-zinc-800 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-indigo-500 appearance-none font-bold"
-                                >
-                                  <option value="static">STATIC (STABLE)</option>
-                                  <option value="upward">UPWARD ARC (CLIMAX)</option>
-                                  <option value="downward">DOWNWARD SPIRAL</option>
-                                  <option value="waves">WAVES (OSCILLATING)</option>
-                                  <option value="climax">CENTERED CLIMAX</option>
-                                </select>
-                              </div>
+                      {extractedProfile && (
+                        <>
+                          <div className="grid grid-cols-2 gap-4">
+                            <div className="space-y-2">
+                              <label className="block text-[9px] font-black text-zinc-600 uppercase tracking-widest pl-1">Vocal Persona</label>
+                              <input type="text" value={extractedProfile.vocalPersona} onChange={(e) => updateProfileField('vocalPersona', e.target.value)} className="w-full bg-zinc-950/30 border border-zinc-800/80 rounded-xl px-4 py-2 text-sm text-zinc-300 focus:outline-none focus:border-indigo-500 transition-colors" />
                             </div>
-
-                            <div className="grid grid-cols-2 gap-4">
-                              <div className="space-y-2">
-                                <label className="block text-[9px] font-black text-zinc-600 uppercase tracking-widest pl-1">Instrumental Pacing</label>
-                                <select 
-                                  value={instrumentalPacing} 
-                                  onChange={(e) => setInstrumentalPacing(e.target.value)}
-                                  className="w-full bg-zinc-950 text-indigo-400 border border-zinc-800 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-indigo-500 appearance-none font-bold"
-                                >
-                                  <option value="default">STANDARD</option>
-                                  <option value="balanced">BALANCED BREAKS</option>
-                                  <option value="cinematic">CINEMATIC / SPACIOUS</option>
-                                </select>
-                              </div>
-                              <div className="space-y-2">
-                                <label className="block text-[9px] font-black text-zinc-600 uppercase tracking-widest pl-1">Audio Tags</label>
-                                <button
-                                  onClick={() => setInjectVocalTags(!injectVocalTags)}
-                                  className={`w-full py-2 px-4 rounded-xl text-[10px] font-black transition-all border ${
-                                    injectVocalTags 
-                                      ? 'bg-indigo-500 text-white border-indigo-400' 
-                                      : 'bg-zinc-950 border-zinc-800 text-zinc-600'
-                                  }`}
-                                >
-                                  {injectVocalTags ? 'ENABLED' : 'DISABLED'}
-                                </button>
-                              </div>
-                            </div>
-
-                            <div className="space-y-4">
-                              <div className="space-y-2">
-                                <label className="block text-[9px] font-black text-zinc-600 uppercase tracking-widest pl-1">Visual Anchor / Seed Object</label>
-                                <input 
-                                  type="text" 
-                                  value={visualAnchor} 
-                                  onChange={(e) => setVisualAnchor(e.target.value)} 
-                                  placeholder="e.g., 'A cracked iPhone screen', 'A single red balloon'" 
-                                  className="w-full bg-zinc-950/30 border border-zinc-800/80 rounded-xl px-4 py-2 text-sm text-zinc-300 focus:outline-none focus:border-indigo-500 transition-colors" 
-                                />
-                              </div>
-                              <div className="space-y-2">
-                                <label className="block text-[9px] font-black text-zinc-600 uppercase tracking-widest pl-1">Structural Blueprint</label>
-                                <input 
-                                  type="text" 
-                                  value={customStructure} 
-                                  onChange={(e) => setCustomStructure(e.target.value)} 
-                                  placeholder="e.g., '[Intro], [Verse 1], [Beat Drop], [Chorus]'" 
-                                  className="w-full bg-zinc-950/30 border border-zinc-800/80 rounded-xl px-4 py-2 text-sm text-zinc-300 focus:outline-none focus:border-indigo-500 transition-colors" 
-                                />
-                              </div>
+                            <div className="space-y-2">
+                              <label className="block text-[9px] font-black text-zinc-600 uppercase tracking-widest pl-1">Emotional Tone</label>
+                              <input type="text" value={extractedProfile.emotionalTone} onChange={(e) => updateProfileField('emotionalTone', e.target.value)} className="w-full bg-zinc-950/30 border border-zinc-800/80 rounded-xl px-4 py-2 text-sm text-zinc-300 focus:outline-none focus:border-indigo-500 transition-colors" />
                             </div>
                           </div>
-                        </motion.div>
-                      )}
-                    </AnimatePresence>
-                  </div>
-                )}
-              </div>
 
-              <div className={activeTab === 'compare' ? 'flex-1 flex flex-col justify-center gap-6' : 'hidden'}>
+                          <div className="grid grid-cols-2 gap-4">
+                            <div className="space-y-2">
+                              <label className="block text-[9px] font-black text-zinc-600 uppercase tracking-widest pl-1">Relationship</label>
+                              <input type="text" value={extractedProfile.relationshipDynamic || ''} onChange={(e) => updateProfileField('relationshipDynamic', e.target.value)} placeholder="Tension, intimacy..." className="w-full bg-zinc-950/30 border border-zinc-800/80 rounded-xl px-4 py-2 text-sm text-zinc-300 focus:outline-none focus:border-indigo-500 transition-colors" />
+                            </div>
+                            <div className="space-y-2">
+                              <label className="block text-[9px] font-black text-zinc-600 uppercase tracking-widest pl-1">Lyrical Density</label>
+                              <input type="text" value={extractedProfile.lyricalDensity || ''} onChange={(e) => updateProfileField('lyricalDensity', e.target.value)} placeholder="Sparse, dense..." className="w-full bg-zinc-950/30 border border-zinc-800/80 rounded-xl px-4 py-2 text-sm text-zinc-300 focus:outline-none focus:border-indigo-500 transition-colors" />
+                            </div>
+                          </div>
+                          
+                          <div className="space-y-4">
+                            <div className="space-y-2">
+                              <label className="block text-[9px] font-black text-zinc-600 uppercase tracking-widest pl-1">Environment</label>
+                              <input type="text" value={extractedProfile.environment || ''} onChange={(e) => updateProfileField('environment', e.target.value)} placeholder="Neon-drenched hallway..." className="w-full bg-zinc-950/30 border border-zinc-800/80 rounded-xl px-4 py-2 text-sm text-zinc-300 focus:outline-none focus:border-indigo-500 transition-colors" />
+                            </div>
+                            <div className="space-y-2">
+                              <label className="block text-[9px] font-black text-zinc-600 uppercase tracking-widest pl-1">Sensory Palette</label>
+                              <input type="text" value={extractedProfile.sensoryPalette || ''} onChange={(e) => updateProfileField('sensoryPalette', e.target.value)} placeholder="Ozone, cold rain..." className="w-full bg-zinc-950/30 border border-zinc-800/80 rounded-xl px-4 py-2 text-sm text-zinc-300 focus:outline-none focus:border-indigo-500 transition-colors" />
+                            </div>
+                            <div className="space-y-2">
+                              <label className="block text-[9px] font-black text-zinc-600 uppercase tracking-widest pl-1">Lyrical DNA / Themes</label>
+                              <textarea 
+                                value={extractedProfile.lyricalTheme || ''} 
+                                onChange={(e) => updateProfileField('lyricalTheme', e.target.value)} 
+                                placeholder="Thematic analysis..." 
+                                className="w-full bg-zinc-950/30 border border-zinc-800/80 rounded-xl px-4 py-2 text-sm text-zinc-300 focus:outline-none focus:border-indigo-500 transition-colors min-h-[80px]"
+                              />
+                            </div>
+                          </div>
+                        </>
+                      )}
+
+                      <div className="space-y-4">
+                        <div className="space-y-2">
+                          <label className="block text-[9px] font-black text-zinc-600 uppercase tracking-widest pl-1">Visual Anchor / Seed Object</label>
+                          <input 
+                            type="text" 
+                            value={visualAnchor} 
+                            onChange={(e) => setVisualAnchor(e.target.value)} 
+                            placeholder="e.g., 'A cracked iPhone screen', 'A single red balloon'" 
+                            className="w-full bg-zinc-950/30 border border-zinc-800/80 rounded-xl px-4 py-2 text-sm text-zinc-300 focus:outline-none focus:border-indigo-500 transition-colors" 
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <label className="block text-[9px] font-black text-zinc-600 uppercase tracking-widest pl-1">Structural Blueprint</label>
+                          <input 
+                            type="text" 
+                            value={customStructure} 
+                            onChange={(e) => setCustomStructure(e.target.value)} 
+                            placeholder="e.g., '[Intro], [Verse 1], [Beat Drop], [Chorus]'" 
+                            className="w-full bg-zinc-950/30 border border-zinc-800/80 rounded-xl px-4 py-2 text-sm text-zinc-300 focus:outline-none focus:border-indigo-500 transition-colors" 
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className={activeTab === 'compare' ? 'flex-1 flex flex-col justify-center gap-6' : 'hidden'}>
                 {renderInputSelector(
                   "Song 1 (Target Sound)", compareSong1, compareInputType1, setCompareInputType1, compareLink1, setCompareLink1,
                   getRootPropsCompare1, getInputPropsCompare1, isDragActiveCompare1, () => setCompareSong1(null)
@@ -1182,14 +1416,91 @@ export default function App() {
                       <h3 className="text-zinc-200 font-medium truncate">{ytInfo.title}</h3>
                       <p className="text-zinc-500 text-sm truncate">{ytInfo.author}</p>
                     </div>
-                    <button
-                      onClick={handleDownloadYt}
-                      className="bg-indigo-600 hover:bg-indigo-500 text-white p-3 rounded-xl transition-colors flex-shrink-0"
-                      title="Download Audio"
-                    >
-                      <Download className="w-5 h-5" />
-                    </button>
+                    <div className="flex gap-2">
+                       <button
+                        onClick={handleCaptureLive}
+                        disabled={isDownloading || isRecording}
+                        className="bg-zinc-900 hover:bg-zinc-800 text-zinc-400 p-4 rounded-2xl border border-zinc-800 transition-all active:scale-95 flex-shrink-0 disabled:opacity-50"
+                        title="Real-Time Stream Capture"
+                      >
+                        <Radio className="w-6 h-6" />
+                      </button>
+                      <button
+                        onClick={handleDownloadYt}
+                        disabled={isDownloading || isRecording}
+                        className="bg-gradient-to-br from-violet-600 to-purple-700 hover:from-violet-500 hover:to-purple-600 text-white p-4 rounded-2xl shadow-xl shadow-purple-500/20 transition-all active:scale-95 flex-shrink-0 disabled:opacity-50"
+                        title="Direct Studio Extraction"
+                      >
+                        {isDownloading || isRecording ? <Loader2 className="w-6 h-6 animate-spin" /> : <Download className="w-6 h-6" />}
+                      </button>
+                    </div>
                   </div>
+                )}
+
+                {isRecording && recordingInfo && (
+                  <motion.div 
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="mt-6 p-6 bg-indigo-500/10 border border-indigo-500/20 rounded-2xl space-y-4"
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="space-y-1">
+                        <p className="text-[10px] font-black text-indigo-400 uppercase tracking-widest leading-none">Studio Recording</p>
+                        <p className="text-sm font-bold text-white truncate max-w-[200px]">{recordingInfo.title}</p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse shadow-[0_0_8px_rgba(239,68,68,0.6)]" />
+                        <span className="text-[10px] font-black text-red-500 uppercase tracking-widest">LIVE CAPTURE</span>
+                      </div>
+                    </div>
+                    
+                    <div className="space-y-2">
+                      <div className="flex justify-between text-[10px] text-zinc-400 font-bold uppercase">
+                        <span>Playback Progress</span>
+                        <span>{recordingProgress.toFixed(0)}%</span>
+                      </div>
+                      <div className="h-1.5 w-full bg-zinc-900 rounded-full overflow-hidden">
+                        <motion.div 
+                          className="h-full bg-indigo-500 shadow-[0_0_10px_rgba(99,102,241,0.5)]"
+                          initial={{ width: 0 }}
+                          animate={{ width: `${recordingProgress}%` }}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="space-y-2">
+                      <div className="flex justify-between text-[10px] text-zinc-400 font-bold uppercase">
+                        <span>Signal Integrity</span>
+                        <span className={audioLevel > 5 ? "text-emerald-500" : "text-amber-500"}>
+                          {audioLevel > 5 ? "ACTIVE SIGNAL" : "NO SIGNAL DETECTED"}
+                        </span>
+                      </div>
+                      <div className="h-3 flex items-end gap-0.5 bg-zinc-900/50 p-0.5 rounded-lg overflow-hidden">
+                        {[...Array(24)].map((_, i) => (
+                          <motion.div
+                            key={i}
+                            className="flex-1 bg-indigo-400/30 rounded-t-sm"
+                            animate={{ 
+                              height: `${Math.max(10, (audioLevel / 100) * (60 + Math.random() * 40))}%`,
+                              backgroundColor: audioLevel > 5 ? 'rgb(129, 140, 248)' : 'rgba(129, 140, 248, 0.1)'
+                            }}
+                            transition={{ duration: 0.1 }}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                    
+                    <p className="text-[9px] text-zinc-500 text-center font-bold">
+                      DO NOT CLOSE THIS TAB. Audio is being captured in real-time.
+                    </p>
+
+                    <button
+                      onClick={() => (window as any).stopStudioRecording?.()}
+                      className="w-full py-2 bg-red-500/20 hover:bg-red-500/30 border border-red-500/30 text-red-400 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all"
+                    >
+                      Finalize & Save Recording
+                    </button>
+                  </motion.div>
                 )}
               </div>
 
@@ -1286,6 +1597,19 @@ export default function App() {
                 <p>{error}</p>
               </motion.div>
             )}
+
+                {success && (
+                  <motion.div 
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: 'auto' }}
+                    className="bg-emerald-500/10 border border-emerald-500/20 rounded-xl p-4 flex gap-3 text-emerald-400 text-[11px] font-bold"
+                  >
+                    <div className="w-4 h-4 rounded-full bg-emerald-500/20 flex items-center justify-center shrink-0 mt-0.5">
+                      <div className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                    </div>
+                    <p>{success}</p>
+                  </motion.div>
+                )}
           </div>
 
           {/* Result Section */}
@@ -1482,6 +1806,22 @@ export default function App() {
                         animate={{ opacity: 1, y: 0 }}
                         className="space-y-16"
                       >
+                         {lyricsExcerpt && (
+                          <div className="bg-indigo-500/5 border border-indigo-500/10 p-10 rounded-[48px] animate-in fade-in slide-in-from-bottom-4 duration-1000">
+                            <div className="flex items-center gap-3 mb-6">
+                              <div className="w-8 h-8 rounded-full bg-indigo-500/10 flex items-center justify-center">
+                                <Sparkles className="w-4 h-4 text-indigo-400" />
+                              </div>
+                              <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-indigo-400">
+                                The Narrative Core
+                              </h4>
+                            </div>
+                            <p className="text-xl text-zinc-300 leading-relaxed italic font-light font-serif">
+                              "{lyricsExcerpt}"
+                            </p>
+                          </div>
+                        )}
+
                          <div className="bg-zinc-900/30 border border-white/[0.03] rounded-[48px] px-12 py-10 glass-card flex flex-col md:flex-row items-center justify-between gap-10">
                           <div className="flex items-center gap-10">
                             <div className="w-20 h-20 rounded-[28px] bg-white/[0.03] flex items-center justify-center shadow-2xl border border-white/[0.05]">
@@ -1509,15 +1849,82 @@ export default function App() {
                                 <span className="text-[10px] font-black text-zinc-600 uppercase tracking-[0.4em] group-hover:text-indigo-400 transition-colors">{segment.label}</span>
                                 <div className="flex gap-2">
                                   <button 
+                                    onClick={() => handleRegenerateSegment(index)} 
+                                    className="opacity-0 group-hover:opacity-100 p-3 bg-zinc-900 border border-zinc-800 rounded-2xl text-zinc-500 hover:text-indigo-400 transition-all shadow-xl"
+                                    title="Regenerate Section (Context Aware)"
+                                  >
+                                    <RefreshCw className={`w-5 h-5 ${isGeneratingRewrite && rewritingSegmentIndex === index ? 'animate-spin text-indigo-400' : ''}`} />
+                                  </button>
+                                  <button 
+                                    onClick={() => { setRewritingSegmentIndex(index); setRewriteOptions(null); setRewriteInstruction(''); }} 
+                                    className="opacity-0 group-hover:opacity-100 p-3 bg-zinc-900 border border-zinc-800 rounded-2xl text-zinc-500 hover:text-indigo-400 transition-all shadow-xl"
+                                    title="Custom Rewrite"
+                                  >
+                                    <Wand2 className="w-5 h-5" />
+                                  </button>
+                                  <button 
                                     onClick={() => { setEditingSegmentIndex(index); setSegmentEditValue(segment.text); }} 
                                     className="opacity-0 group-hover:opacity-100 p-3 bg-zinc-900 border border-zinc-800 rounded-2xl text-zinc-500 hover:text-white transition-all shadow-xl"
+                                    title="Manual Edit"
                                   >
                                     <Edit3 className="w-5 h-5" />
                                   </button>
                                 </div>
                               </div>
                               
-                              {editingSegmentIndex === index ? (
+                              {rewritingSegmentIndex === index ? (
+                                <div className="space-y-6 animate-in fade-in slide-in-from-top-4 duration-500">
+                                  <div className="relative">
+                                    <input
+                                      type="text"
+                                      value={rewriteInstruction}
+                                      onChange={(e) => setRewriteInstruction(e.target.value)}
+                                      placeholder="How should I rewrite this? (e.g., 'Make it more aggressive', 'Add a metaphor about rain')"
+                                      className="w-full bg-zinc-950 border border-zinc-800 rounded-3xl px-8 py-5 text-lg font-bold text-white focus:outline-none focus:ring-4 focus:ring-indigo-500/10 placeholder:text-zinc-700"
+                                      onKeyDown={(e) => e.key === 'Enter' && handleRewriteSegment(index)}
+                                    />
+                                    <button
+                                      onClick={() => handleRewriteSegment(index)}
+                                      disabled={isGeneratingRewrite || !rewriteInstruction.trim()}
+                                      className="absolute right-3 top-3 bottom-3 px-6 bg-indigo-600 font-black text-[10px] uppercase tracking-widest text-white rounded-2xl hover:bg-indigo-500 transition-all disabled:opacity-50 disabled:grayscale"
+                                    >
+                                      {isGeneratingRewrite ? <Loader2 className="w-5 h-5 animate-spin" /> : 'GO'}
+                                    </button>
+                                  </div>
+
+                                  {rewriteOptions && (
+                                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                                      {rewriteOptions.map((option, i) => (
+                                        <button
+                                          key={i}
+                                          onClick={() => commitRewriteOption(index, option)}
+                                          className="text-left p-8 bg-zinc-900 hover:bg-zinc-800 border border-white/[0.05] rounded-[32px] transition-all group/opt relative overflow-hidden"
+                                        >
+                                          <div className="absolute top-0 right-0 p-4 opacity-0 group-hover/opt:opacity-100 transition-opacity">
+                                            <div className="px-3 py-1 bg-indigo-500 text-[8px] font-black uppercase text-white rounded-full">Option {i + 1}</div>
+                                          </div>
+                                          <p className="text-sm font-bold text-zinc-300 leading-relaxed italic">
+                                            "{option}"
+                                          </p>
+                                          <div className="mt-6 flex items-center justify-between">
+                                            <span className="text-[10px] font-black text-indigo-400 uppercase tracking-widest opacity-0 group-hover/opt:opacity-100 transition-all translate-y-2 group-hover/opt:translate-y-0">Use This</span>
+                                            <Check className="w-4 h-4 text-zinc-700 group-hover/opt:text-indigo-400" />
+                                          </div>
+                                        </button>
+                                      ))}
+                                    </div>
+                                  )}
+
+                                  <div className="flex justify-end">
+                                    <button 
+                                      onClick={() => { setRewritingSegmentIndex(null); setRewriteOptions(null); setRewriteInstruction(''); }} 
+                                      className="px-6 py-3 text-[10px] font-black uppercase tracking-widest text-zinc-600 hover:text-white"
+                                    >
+                                      Cancel
+                                    </button>
+                                  </div>
+                                </div>
+                              ) : editingSegmentIndex === index ? (
                                  <div className="space-y-6">
                                   <textarea
                                     value={segmentEditValue}
@@ -1540,9 +1947,37 @@ export default function App() {
                                   </div>
                                  </div>
                               ) : (
-                                <p className="text-2xl md:text-3xl font-black text-white leading-[1.6] whitespace-pre-wrap tracking-tight">
-                                  {segment.text}
-                                </p>
+                                <div className="space-y-12">
+                                  <p className="text-2xl md:text-3xl font-black text-white leading-[1.6] whitespace-pre-wrap tracking-tight">
+                                    {segment.text}
+                                  </p>
+                                  {(segment.explanation || segment.transition) && (
+                                    <div className="pt-10 border-t border-white/[0.03] grid grid-cols-1 md:grid-cols-2 gap-10">
+                                      {segment.explanation && (
+                                        <div className="space-y-3">
+                                          <div className="flex items-center gap-2">
+                                            <div className="w-1.5 h-1.5 rounded-full bg-indigo-500 shadow-[0_0_8px_rgba(99,102,241,0.6)]" />
+                                            <span className="text-[9px] font-black uppercase tracking-[0.4em] text-zinc-500">Narrative Purpose</span>
+                                          </div>
+                                          <p className="text-[12px] text-zinc-400 leading-relaxed font-light italic">
+                                            "{segment.explanation}"
+                                          </p>
+                                        </div>
+                                      )}
+                                      {segment.transition && (
+                                        <div className="space-y-3">
+                                          <div className="flex items-center gap-2">
+                                            <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.6)]" />
+                                            <span className="text-[9px] font-black uppercase tracking-[0.2em] text-zinc-500">Connecting Tissue</span>
+                                          </div>
+                                          <p className="text-[12px] text-zinc-400 leading-relaxed font-light">
+                                            {segment.transition}
+                                          </p>
+                                        </div>
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
                               )}
                             </div>
                           ))}
@@ -1628,9 +2063,23 @@ export default function App() {
                 <div className="inline-block px-8 py-2 rounded-full bg-white/[0.03] text-indigo-400 font-black text-xs uppercase tracking-[0.5em] mb-16 border border-white/[0.05]">
                   {seg.label}
                 </div>
-                <div className="text-zinc-100 text-5xl sm:text-7xl md:text-9xl font-black leading-[1.1] whitespace-pre-wrap tracking-tighter hyphens-auto">
+                <div className="text-zinc-100 text-5xl sm:text-7xl md:text-9xl font-black leading-[1.1] whitespace-pre-wrap tracking-tighter hyphens-auto mb-16">
                   {seg.text}
                 </div>
+                {(seg.explanation || seg.transition) && (
+                  <div className="max-w-2xl mx-auto space-y-6 opacity-40 hover:opacity-100 transition-opacity duration-700">
+                    {seg.explanation && (
+                      <p className="text-xl text-indigo-400 font-light italic leading-relaxed">
+                        "{seg.explanation}"
+                      </p>
+                    )}
+                    {seg.transition && (
+                      <p className="text-[10px] text-zinc-500 font-black uppercase tracking-[0.4em]">
+                        → {seg.transition}
+                      </p>
+                    )}
+                  </div>
+                )}
               </motion.div>
             ))}
             

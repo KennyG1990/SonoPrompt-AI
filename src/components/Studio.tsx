@@ -15,6 +15,7 @@ export type Track = {
   youtubeId?: string;
   isGenerating?: boolean;
   analysis?: string;
+  meaning?: string;
 };
 
 export default function Studio({ aiConfig }: { aiConfig?: AIConfig }) {
@@ -71,7 +72,7 @@ export default function Studio({ aiConfig }: { aiConfig?: AIConfig }) {
       setShowAutoGenerate(false); // Close the panel after success
       
       // Automatically trigger Sonauto generation
-      await triggerSonautoGeneration(result.title, result.prompt, result.lyrics, result.styleTags, result.analysis);
+      await triggerSonautoGeneration(result.title, result.prompt, result.lyrics, result.styleTags, result.analysis, result.meaning);
 
     } catch (err: any) {
       console.error(err);
@@ -81,7 +82,7 @@ export default function Studio({ aiConfig }: { aiConfig?: AIConfig }) {
     }
   };
 
-  const triggerSonautoGeneration = async (t: string, d: string, l: string, s: string, analysis?: string) => {
+  const triggerSonautoGeneration = async (t: string, d: string, l: string, s: string, analysis?: string, meaning?: string) => {
     setIsGenerating(true);
     const trackId = Math.random().toString(36).substring(2, 9);
     const newTrack: Track = {
@@ -91,6 +92,7 @@ export default function Studio({ aiConfig }: { aiConfig?: AIConfig }) {
       lyrics: l,
       styleTags: s,
       analysis: analysis,
+      meaning: meaning,
       createdAt: new Date(),
       isGenerating: true
     };
@@ -517,10 +519,20 @@ export default function Studio({ aiConfig }: { aiConfig?: AIConfig }) {
           <div className="flex-1 overflow-y-auto custom-scrollbar p-4">
             {selectedTrack ? (
               <div className="space-y-6">
+                {selectedTrack.meaning && (
+                  <div>
+                    <h3 className="text-xs font-medium text-zinc-500 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                      <Sparkles className="w-3.5 h-3.5 text-indigo-400" /> Narrative Meaning
+                    </h3>
+                    <div className="text-sm text-zinc-300 bg-indigo-500/5 p-4 rounded-xl border border-indigo-500/10 italic leading-relaxed">
+                      "{selectedTrack.meaning}"
+                    </div>
+                  </div>
+                )}
                 {selectedTrack.analysis && (
                   <div>
                     <h3 className="text-xs font-medium text-zinc-500 uppercase tracking-wider mb-2 flex items-center gap-1.5">
-                      <Sparkles className="w-3.5 h-3.5" /> Song Analysis
+                      <FileText className="w-3.5 h-3.5" /> Sonar Analysis
                     </h3>
                     <div className="text-sm text-zinc-300 bg-zinc-950 p-3 rounded-lg border border-zinc-800/50 leading-relaxed">
                       {selectedTrack.analysis}
@@ -529,9 +541,9 @@ export default function Studio({ aiConfig }: { aiConfig?: AIConfig }) {
                 )}
                 <div>
                   <h3 className="text-xs font-medium text-zinc-500 uppercase tracking-wider mb-2 flex items-center gap-1.5">
-                    <FileText className="w-3.5 h-3.5" /> Lyrics
+                    <Music className="w-3.5 h-3.5" /> Lyrics
                   </h3>
-                  <div className="whitespace-pre-wrap text-sm text-zinc-300 leading-relaxed">
+                  <div className="whitespace-pre-wrap text-sm text-zinc-300 bg-zinc-950 p-3 rounded-lg border border-zinc-800/20 leading-relaxed font-mono">
                     {selectedTrack.lyrics || <span className="text-zinc-600 italic">No lyrics provided.</span>}
                   </div>
                 </div>
