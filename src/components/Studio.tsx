@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { Play, Pause, Upload, Youtube, Plus, Music, FileText, Trash2, Loader2, CheckCircle2, Wand2, Link as LinkIcon, Sparkles, Download } from 'lucide-react';
+import { Play, Pause, Upload, Youtube, Plus, Music, FileText, Trash2, Loader2, CheckCircle2, Wand2, Link as LinkIcon, Sparkles, Download, Languages, ChevronDown } from 'lucide-react';
 import { useDropzone } from 'react-dropzone';
-import { analyzeAndGenerateStudioTrack, SongInput, AIConfig } from '../services/geminiService';
+import { analyzeAndGenerateStudioTrack, SongInput, AIConfig, translateLyrics } from '../services/geminiService';
 
 export type Track = {
   id: string;
@@ -18,14 +18,79 @@ export type Track = {
   meaning?: string;
 };
 
+const SUPPORTED_LANGUAGES = [
+  'Spanish', 'French', 'German', 'Italian', 'Portuguese', 
+  'Japanese', 'Korean', 'Chinese', 'Russian', 'Arabic', 
+  'Hindi', 'Turkish', 'Dutch', 'Swedish', 'Polish'
+];
+
 export default function Studio({ aiConfig }: { aiConfig?: AIConfig }) {
   const [tracks, setTracks] = useState<Track[]>([]);
   const [selectedTrackId, setSelectedTrackId] = useState<string | null>(null);
+  const [hasSelection, setHasSelection] = useState(false);
+  const [hasSelectedTrackSelection, setHasSelectedTrackSelection] = useState(false);
   
+  // Translation State
+  const [targetLang, setTargetLang] = useState('Spanish');
+  const [isTranslating, setIsTranslating] = useState(false);
+
+  const handleTranslate = async (text: string, isForDraft: boolean, trackId?: string) => {
+    let textToTranslate = text;
+    let isSelection = false;
+    let selectionStart = 0;
+    let selectionEnd = 0;
+
+    // Check for selection
+    const activeRef = isForDraft ? lyricsTextAreaRef : selectedTrackLyricsRef;
+    if (activeRef.current) {
+      const start = activeRef.current.selectionStart;
+      const end = activeRef.current.selectionEnd;
+      if (start !== end) {
+        textToTranslate = text.substring(start, end);
+        isSelection = true;
+        selectionStart = start;
+        selectionEnd = end;
+      }
+    }
+
+    if (!textToTranslate.trim()) return;
+    setIsTranslating(true);
+    try {
+      const translated = await translateLyrics(textToTranslate, targetLang, aiConfig);
+      if (isForDraft) {
+        if (isSelection) {
+          const newLyrics = lyrics.substring(0, selectionStart) + translated + lyrics.substring(selectionEnd);
+          setLyrics(newLyrics);
+        } else {
+          setLyrics(translated);
+        }
+      } else if (trackId) {
+        if (isSelection) {
+          setTracks(prev => prev.map(t => {
+            if (t.id === trackId) {
+              const newLyrics = t.lyrics.substring(0, selectionStart) + translated + t.lyrics.substring(selectionEnd);
+              return { ...t, lyrics: newLyrics };
+            }
+            return t;
+          }));
+        } else {
+          setTracks(prev => prev.map(t => t.id === trackId ? { ...t, lyrics: translated } : t));
+        }
+      }
+    } catch (err: any) {
+      console.error(err);
+      alert('Translation failed: ' + err.message);
+    } finally {
+      setIsTranslating(false);
+    }
+  };
+
   // Create Form State
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [lyrics, setLyrics] = useState('');
+  const lyricsTextAreaRef = useRef<HTMLTextAreaElement>(null);
+  const selectedTrackLyricsRef = useRef<HTMLTextAreaElement>(null);
   const [styleTags, setStyleTags] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
 
@@ -76,7 +141,12 @@ export default function Studio({ aiConfig }: { aiConfig?: AIConfig }) {
 
     } catch (err: any) {
       console.error(err);
-      alert(err.message || 'Failed to auto-generate track details.');
+      const msg = err.message || '';
+      if (msg.includes('429') || msg.includes('503') || msg.includes('high demand') || msg.includes('internal error')) {
+        alert('The AI Creative Engine is currently experiencing a temporary surge in traffic. We have attempted to generate a fallback for you, but please try the specific action again in a few moments.');
+      } else {
+        alert(msg || 'Failed to auto-generate track details.');
+      }
     } finally {
       setIsAutoGenerating(false);
     }
@@ -358,9 +428,39 @@ export default function Studio({ aiConfig }: { aiConfig?: AIConfig }) {
               />
             </div>
             <div>
-              <label className="block text-xs font-medium text-zinc-400 mb-1">Lyrics</label>
+              <div className="flex items-center justify-between mb-1">
+                <label className="block text-xs font-medium text-zinc-400">Lyrics</label>
+                <div className="flex items-center gap-1">
+                  <select 
+                    value={targetLang}
+                    onChange={e => setTargetLang(e.target.value)}
+                    className="bg-zinc-900 border border-zinc-800 rounded px-1 py-0.5 text-[10px] text-zinc-300 focus:outline-none"
+                  >
+                    {SUPPORTED_LANGUAGES.map(lang => (
+                      <option key={lang} value={lang}>{lang}</option>
+                    ))}
+                  </select>
+                  <button
+                    onClick={() => handleTranslate(lyrics, true)}
+                    disabled={isTranslating || !lyrics.trim()}
+                    className="p-1 hover:bg-zinc-800 rounded text-zinc-400 hover:text-indigo-400 transition-colors disabled:opacity-30 flex items-center gap-1"
+                    title={lyricsTextAreaRef.current?.selectionStart !== lyricsTextAreaRef.current?.selectionEnd ? "Translate Selection" : "Translate All"}
+                  >
+                    {isTranslating ? <Loader2 className="w-3 h-3 animate-spin" /> : <Languages className="w-3 h-3" />}
+                    <span className="text-[9px] uppercase font-bold">
+                      {hasSelection ? 'Sel' : 'All'}
+                    </span>
+                  </button>
+                </div>
+              </div>
               <textarea 
+                ref={lyricsTextAreaRef}
                 value={lyrics}
+                onSelect={() => {
+                  if (lyricsTextAreaRef.current) {
+                    setHasSelection(lyricsTextAreaRef.current.selectionStart !== lyricsTextAreaRef.current.selectionEnd);
+                  }
+                }}
                 onChange={e => setLyrics(e.target.value)}
                 placeholder="[Verse 1]&#10;Enter lyrics here..."
                 className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-sm h-48 resize-none focus:outline-none focus:border-indigo-500 custom-scrollbar"
@@ -540,12 +640,46 @@ export default function Studio({ aiConfig }: { aiConfig?: AIConfig }) {
                   </div>
                 )}
                 <div>
-                  <h3 className="text-xs font-medium text-zinc-500 uppercase tracking-wider mb-2 flex items-center gap-1.5">
-                    <Music className="w-3.5 h-3.5" /> Lyrics
-                  </h3>
-                  <div className="whitespace-pre-wrap text-sm text-zinc-300 bg-zinc-950 p-3 rounded-lg border border-zinc-800/20 leading-relaxed font-mono">
-                    {selectedTrack.lyrics || <span className="text-zinc-600 italic">No lyrics provided.</span>}
+                  <div className="flex items-center justify-between mb-2">
+                    <h3 className="text-xs font-medium text-zinc-500 uppercase tracking-wider flex items-center gap-1.5">
+                      <Music className="w-3.5 h-3.5" /> Lyrics
+                    </h3>
+                    <div className="flex items-center gap-1">
+                      <select 
+                        value={targetLang}
+                        onChange={e => setTargetLang(e.target.value)}
+                        className="bg-zinc-800 border border-zinc-700 rounded px-1 py-0.5 text-[10px] text-zinc-300 focus:outline-none"
+                      >
+                        {SUPPORTED_LANGUAGES.map(lang => (
+                          <option key={lang} value={lang}>{lang}</option>
+                        ))}
+                      </select>
+                      <button
+                        onClick={() => handleTranslate(selectedTrack.lyrics, false, selectedTrack.id)}
+                        disabled={isTranslating || !selectedTrack.lyrics.trim()}
+                        className="flex items-center gap-1 px-2 py-0.5 bg-zinc-800 hover:bg-zinc-700 rounded text-[10px] text-indigo-400 transition-colors disabled:opacity-30 border border-zinc-700"
+                        title={hasSelectedTrackSelection ? 'Translate Selection' : 'Translate All'}
+                      >
+                        {isTranslating ? <Loader2 className="w-3 h-3 animate-spin" /> : <Languages className="w-3 h-3" />}
+                        {hasSelectedTrackSelection ? 'Translate Selection' : 'Translate All'}
+                      </button>
+                    </div>
                   </div>
+                  <textarea
+                    ref={selectedTrackLyricsRef}
+                    value={selectedTrack.lyrics}
+                    onSelect={() => {
+                      if (selectedTrackLyricsRef.current) {
+                        setHasSelectedTrackSelection(selectedTrackLyricsRef.current.selectionStart !== selectedTrackLyricsRef.current.selectionEnd);
+                      }
+                    }}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setTracks(prev => prev.map(t => t.id === selectedTrack.id ? { ...t, lyrics: val } : t));
+                    }}
+                    className="w-full whitespace-pre-wrap text-sm text-zinc-300 bg-zinc-950 p-3 rounded-lg border border-zinc-800/20 leading-relaxed font-mono min-h-[300px] resize-none focus:outline-none focus:border-indigo-500/50"
+                    placeholder="No lyrics provided."
+                  />
                 </div>
               </div>
             ) : (

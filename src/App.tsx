@@ -3,7 +3,7 @@ import { Upload, Link as LinkIcon, Music, Loader2, Sparkles, RefreshCw, AlertCir
 import { useDropzone } from 'react-dropzone';
 import ReactMarkdown from 'react-markdown';
 import { motion, AnimatePresence } from 'motion/react';
-import { analyzeAudioFile, analyzeSongLink, compareSongs, generateLyrics, rewriteLyricSegment, suggestSongTitle, ghostwriteNextLine, generateMoodVisual, SongInput, LyricSegment, ExtractedProfile, AnalysisResult, AIConfig } from './services/geminiService';
+import { analyzeAudioFile, analyzeSongLink, compareSongs, generateLyrics, rewriteLyricSegment, suggestSongTitle, ghostwriteNextLine, generateMoodVisual, abstractProfileFields, SongInput, LyricSegment, ExtractedProfile, AnalysisResult, AIConfig } from './services/geminiService';
 import Studio from './components/Studio';
 import SonicRadarChart from './components/SonicRadarChart';
 
@@ -12,6 +12,118 @@ export interface LyricistProfile {
   name: string;
   rules: string;
 }
+
+export const STYLE_LANES = [
+  {
+    id: 'sexy-rnb',
+    name: 'Sexy RnB',
+    rules: `ARTIST IDENTITY: nocturnal, sensual, intimate, stylish, emotionally damaged, secretive, physically immediate, seductive, hook-driven, high-gloss, breathy vocal feel.
+LANE: erotic tension, secrecy, temptation, dependence, possession, guilt, physical need. Seductive first, dangerous second, poetic third. Stay in the moment. No emotional distance.`
+  },
+  {
+    id: 'confessional-indie',
+    name: 'Confessional Indie / Folk',
+    rules: 'STYLE: Confessional Indie / Folk. PERSPECTIVE: First-person, intimate, plainspoken. Focus on specific small-scale domestic details (apartments, names of friends, specific mundane objects). ELEVATE the mundane through extreme attention. ANTI-METAPHOR: Avoid grand sweeping metaphors; prioritize emotional specificity over poetic abstraction. Tender, devastating, small, quiet, profoundly personal.'
+  },
+  {
+    id: 'trap-drill-bars',
+    name: 'Trap / Drill',
+    rules: 'STYLE: Trap / Drill. STRUCTURE: High syllable density, rapid-fire delivery. RHYME: Internal rhyme schemes, multi-syllabic punches. CONTENT: Brag-flex-grief flow. Use specific brand names and location anchors for grounding. DIALECT: Slang as architecture. RHYTHMIC RULE: Punch against the beat (staccato) rather than melodic flowing. Verses perform status, pain, and territorial identity.'
+  },
+  {
+    id: 'cinematic-synthwave',
+    name: 'Synthwave',
+    rules: 'STYLE: Cinematic Synthwave / Darksynth. PERSPECTIVE: Mandatory Second-person address ("You walk into the room...", "You see the lights..."). IMAGERY: Nocturnal-urban, neon, concrete, chrome, rain-slicked streets. THEMES: Time, distance, nostalgia, isolation. MOOD: Cooler distance rather than physical immediacy. Narrative over raw emotion.'
+  },
+  {
+    id: 'spiritual-soul',
+    name: 'Spiritual Soul',
+    rules: 'STYLE: Gospel-Influenced Soul. IMAGERY: Sacred-secular blend. Use "body-as-temple" metaphors. THEMES: Redemption arcs, sin, salvation, burden, grace. VOCABULARY: "Lord," "save," "carry," "drown," "rise," "mercy." Call-and-response repetition. Heavy, grounded, cathartic, lung-heavy vocal energy.'
+  },
+  {
+    id: 'hyperpop-glitch',
+    name: 'Hyperpop / Glitch',
+    rules: 'STYLE: Hyperpop / Glitch. SYNTAX: Fragmented sentences, broken syntax, non-linear thought patterns. VOCABULARY: Internet-speak, post-ironic phrasing. FORMATTING: Use ALL CAPS and lowercase shifts intentionally to indicate emotional whiplash. FEEL: High-energy, chaotic, short bursts of imagery. GOAL: Intentional cliché reclamation and subversion. Sound like digital overload.'
+  },
+  {
+    id: 'country-story-song',
+    name: 'Country Story-Song',
+    rules: 'STYLE: Country / Americana. STRUCTURE: Linear narrative arc (Character does X, then Y, consequence Z). ANCHORING: Root the song in a specific location (highway, porch, bar, truck). CENTRAL IMAGE: Every song revolves around one concrete object. LANGUAGE: Plainspoken, blue-collar vocabulary. ELEVATE: Use exactly ONE elevated, "silver tongue" poetic line per verse.'
+  },
+  {
+    id: 'dream-pop-shoegaze',
+    name: 'Dream Pop / Shoegaze',
+    rules: 'STYLE: Dream Pop / Shoegaze. IMAGERY: Abstract, washed-out, ethereal, blurry. VOCAL RULE: Vowel-heavy word choices that flow over the beat like a stream. NARRATIVE: No linear throughline or story required; prioritize mood. FUNCTION: Words are texture and instrument first, meaning second. Themes: Fading memories, light, distance, haze.'
+  }
+];
+
+export const CRAFT_LAYERS = [
+  {
+    id: 'standard-songwriter',
+    name: 'Standard Songwriter',
+    rules: 'CRAFT: Write evocative, professional lyrics with a balance of narrative and abstract imagery. Focus on clear structures and relatable emotions.'
+  },
+  {
+    id: 'visceral-poet',
+    name: 'Visceral Poet',
+    rules: 'CRAFT: Focus heavily on physical details, sensory language, and "show-don-tell". Avoid clichés at all costs. Use complex slant rhymes and avoid perfect rhymes.'
+  },
+  {
+    id: 'spoken-word',
+    name: 'Spoken Word',
+    rules: 'CRAFT: Style: Spoken Word / Hip-Hop Soul. STRUCTURE: Long lines, prose-like cadence. RHYTHM: Deliberately un-singable, speech-pattern rhythm. CONTENT: Philosophical, political, or introspective. LANGUAGE: High-vocabulary, intellectual but visceral.'
+  }
+];
+
+export const HEAT_MODIFIERS = [
+  {
+    id: 'restrained',
+    name: 'Restrained',
+    rules: 'HEAT: Understated, subtle, quiet, tension held back. Emotions are suggested rather than screamed. Cool distance.'
+  },
+  {
+    id: 'standard',
+    name: 'Standard',
+    rules: 'HEAT: Balanced emotion, appropriate for general listening. Clear emotional arc without excessive intensity.'
+  },
+  {
+    id: 'visceral',
+    name: 'Visceral',
+    rules: 'HEAT: Raw, intense, emotionally heavy, very physical. High stakes, heavy sensory load, desperate energy.'
+  },
+  {
+    id: 'explicit',
+    name: 'Explicit',
+    rules: 'HEAT: Blunt, direct, unmapped, highly sexual or aggressive. Do not avoid explicit phrasing or blunt physical truth. No filter.'
+  }
+];
+
+export const DEFAULT_PROFILES: LyricistProfile[] = [
+  {
+    id: 'sexy-rnb-engine',
+    name: 'Sexy RnB (Full Engine)',
+    rules: `ARTIST IDENTITY: nocturnal, sensual, intimate, stylish, emotionally damaged, secretive, physically immediate, seductive, hook-driven, high-gloss, breathy vocal feel.
+CORE RULE: Sound like the same ARTIST, not the same SONG. Lane is erotic tension, secrecy, temptation, dependence, possession, guilt, physical need, and the power dynamic of dominance and submission. Seductive first, dangerous second, poetic third.
+MAIN GOAL: Stay in the moment. No emotional distance.
+PERSPECTIVE LOCK (mandatory): Every song MUST be written from ONE of two perspectives — never both, never neutral. Choose at the start of generation and hold that choice across every section.
+DOMINANT PERSPECTIVE: The narrator is the one giving commands, taking, holding, claiming, marking, controlling the pace, deciding what is given and withheld. Verbs are active and possessive. Address to the other person is directive. Sentence energy is patient, in control, deliberate. Pleasure is something the narrator administers, watches, or extracts. The narrator is never asking — they are stating, instructing, or taking.
+SUBMISSIVE PERSPECTIVE: The narrator is the one offering, surrendering, begging, opening, waiting, being held, taken, marked, used, ruined. Verbs are receptive and yielding. Address to the other person is pleading, inviting, or thanking. Sentence energy is breathless, urgent, undone. Pleasure is something the narrator receives, endures, or earns by giving up control. The narrator is never commanding — they are asking, offering, or being acted upon.
+If no perspective is specified externally, default to SUBMISSIVE. Do not blend the two perspectives within a single song. The narrator is one or the other for the entire track.
+SEXUAL TENSION: Unmistakable body-level tension (touch, breath, pressure, restraint, mark). Chorus must be sexually direct in the chosen perspective's register — Dominant choruses are blunt commands and statements of possession; Submissive choruses are blunt pleas, offers, and surrenders. Default toward lust over metaphor.
+EXPLICITNESS: Do not avoid explicit sexual phrasing or blunt intimate phrases. Profanity as sexual language, not filler. D/s vocabulary is welcome where it serves the song — holding, kneeling, marking, breath, pressure, mercy, please, take, give, mine, yours, ruined, undone — but is never costume. The dynamic must feel lived-in, not performed.
+WRITING: Concrete physical details. Every section must increase desire, risk, or tension. Verses cinematic, chorus simple and physical. The chosen perspective dictates which body the camera is closest to — Dominant lyrics observe the partner's body and reactions; Submissive lyrics inhabit the narrator's own body being acted upon.`
+  },
+  {
+    id: 'standard-songwriter-preset',
+    name: 'Standard Songwriter',
+    rules: 'Write evocative, professional lyrics with a balance of narrative and abstract imagery. Focus on clear structures and relatable emotions.'
+  },
+  {
+    id: 'visceral-poet-preset',
+    name: 'Visceral Poet',
+    rules: 'Focus heavily on physical details, sensory language, and "show-don-tell". Avoid clichés at all costs. Use complex slant rhymes and avoid perfect rhymes.'
+  }
+];
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<'analyze' | 'compare' | 'studio' | 'youtube'>('analyze');
@@ -32,6 +144,13 @@ export default function App() {
   const [analyzeLink, setAnalyzeLink] = useState('');
   const [lyricsTheme, setLyricsTheme] = useState('');
   const [extractedProfile, setExtractedProfile] = useState<ExtractedProfile | null>(null);
+  
+  // Layered Personality state
+  const [selectedLaneId, setSelectedLaneId] = useState('confessional-indie');
+  const [selectedCraftId, setSelectedCraftId] = useState('visceral-poet');
+  const [selectedHeatId, setSelectedHeatId] = useState('standard');
+  const [isUsingLayers, setIsUsingLayers] = useState(true);
+
   const [lyricistPersonality, setLyricistPersonality] = useState('');
   const [profiles, setProfiles] = useState<LyricistProfile[]>([]);
   const [activeProfileId, setActiveProfileId] = useState<string>('');
@@ -61,6 +180,7 @@ export default function App() {
   const [isBoothMode, setIsBoothMode] = useState(false);
   const [moodVisualUrl, setMoodVisualUrl] = useState<string | null>(null);
   const [isGeneratingMoodVisual, setIsGeneratingMoodVisual] = useState(false);
+  const [isAbstracting, setIsAbstracting] = useState(false);
 
   // Compare state
   const [compareSong1, setCompareSong1] = useState<SongInput | null>(null);
@@ -85,10 +205,18 @@ export default function App() {
     const saved = localStorage.getItem('lyricist-profiles');
     if (saved) {
       try {
-        setProfiles(JSON.parse(saved));
+        const parsed = JSON.parse(saved);
+        if (parsed.length > 0) {
+          setProfiles(parsed);
+        } else {
+          setProfiles(DEFAULT_PROFILES);
+        }
       } catch (e) {
         console.error('Failed to parse profiles', e);
+        setProfiles(DEFAULT_PROFILES);
       }
+    } else {
+      setProfiles(DEFAULT_PROFILES);
     }
 
     const savedSettings = localStorage.getItem('ai-settings');
@@ -102,6 +230,22 @@ export default function App() {
         setOpenRouterModel(settings.openRouterModel || 'auto'); // Keep just in case
       } catch (e) {
         console.error('Failed to parse settings', e);
+      }
+    }
+
+    const savedSteering = localStorage.getItem('steering-settings');
+    if (savedSteering) {
+      try {
+        const steering = JSON.parse(savedSteering);
+        if (steering.extractedProfile) setExtractedProfile(steering.extractedProfile);
+        if (steering.visualAnchor) setVisualAnchor(steering.visualAnchor);
+        if (steering.customStructure) setCustomStructure(steering.customStructure);
+        if (steering.injectVocalTags !== undefined) setInjectVocalTags(steering.injectVocalTags);
+        if (steering.rhymeComplexity) setRhymeComplexity(steering.rhymeComplexity);
+        if (steering.emotionalArc) setEmotionalArc(steering.emotionalArc);
+        if (steering.instrumentalPacing) setInstrumentalPacing(steering.instrumentalPacing);
+      } catch (e) {
+        console.error('Failed to parse steering settings', e);
       }
     }
   }, []);
@@ -137,6 +281,18 @@ export default function App() {
     }
   };
 
+  useEffect(() => {
+    localStorage.setItem('steering-settings', JSON.stringify({
+      extractedProfile,
+      visualAnchor,
+      customStructure,
+      injectVocalTags,
+      rhymeComplexity,
+      emotionalArc,
+      instrumentalPacing
+    }));
+  }, [extractedProfile, visualAnchor, customStructure, injectVocalTags, rhymeComplexity, emotionalArc, instrumentalPacing]);
+
   const currentAIConfig: AIConfig = {
     provider: aiProvider,
     openRouterKey: openRouterKey || undefined,
@@ -148,6 +304,7 @@ export default function App() {
   const handleProfileSelect = (id: string) => {
     setActiveProfileId(id);
     setIsSavingProfile(false);
+    setIsUsingLayers(false);
     if (id) {
       const p = profiles.find(x => x.id === id);
       if (p) setLyricistPersonality(p.rules);
@@ -155,6 +312,26 @@ export default function App() {
       setLyricistPersonality(''); 
     }
   };
+
+  const syncLayeredPersonality = (laneId: string, craftId: string, heatId: string) => {
+    const lane = STYLE_LANES.find(l => l.id === laneId);
+    const craft = CRAFT_LAYERS.find(c => c.id === craftId);
+    const heat = HEAT_MODIFIERS.find(h => h.id === heatId);
+    
+    if (lane && craft && heat) {
+      const combined = `${lane.rules}\n\n${craft.rules}\n\n${heat.rules}`;
+      setLyricistPersonality(combined);
+      setIsUsingLayers(true);
+      setActiveProfileId('');
+    }
+  };
+
+  // Effect to sync layers to personality when they change, but ONLY if we are in layers mode
+  useEffect(() => {
+    if (isUsingLayers) {
+      syncLayeredPersonality(selectedLaneId, selectedCraftId, selectedHeatId);
+    }
+  }, [selectedLaneId, selectedCraftId, selectedHeatId, isUsingLayers]);
 
   const handlePersonalityChange = (val: string) => {
     setLyricistPersonality(val);
@@ -376,10 +553,15 @@ export default function App() {
       }
     } catch (err: any) {
       console.error(err);
-      if (err.message?.includes('429')) {
+      const msg = err.message || '';
+      if (msg.includes('429')) {
         setError('The Songwriter is currently overloaded. Please wait 60 seconds and try again. (Quota Exceeded)');
+      } else if (msg.includes('503') || msg.includes('high demand') || msg.includes('service unavailable')) {
+        setError('Gemini is currently experiencing high demand. Retrying via the engine, but you may need to wait 30 seconds and try again.');
+      } else if (msg.includes('500') || msg.includes('internal error')) {
+        setError('Gemini encountered an internal error. We are attempting to recover but you may need to re-submit your request.');
       } else {
-        setError(err.message || 'An error occurred.');
+        setError(msg || 'An error occurred.');
       }
     } finally {
       setIsAnalyzing(false);
@@ -392,7 +574,7 @@ export default function App() {
     setIsGeneratingMoodVisual(true);
     setError(null);
     try {
-      const url = await generateMoodVisual(extractedProfile.visualPrompt);
+      const url = await generateMoodVisual(extractedProfile.visualPrompt, lyricistPersonality, lyricsTheme);
       setMoodVisualUrl(url);
     } catch (e: any) {
       setError(e.message || "Failed to generate mood visual.");
@@ -766,6 +948,21 @@ export default function App() {
     setExtractedProfile(prev => prev ? { ...prev, [key]: value } : null);
   };
 
+  const handleAbstractDNA = async () => {
+    if (!extractedProfile) return;
+    setIsAbstracting(true);
+    setError(null);
+    try {
+      const abstracted = await abstractProfileFields(extractedProfile, currentAIConfig);
+      setExtractedProfile(abstracted);
+      setSuccess("Creative DNA has been successfully abstracted into deep patterns.");
+    } catch (e: any) {
+      setError(e.message || "Failed to abstract Creative DNA.");
+    } finally {
+      setIsAbstracting(false);
+    }
+  };
+
   const renderInputSelector = (
     label: string,
     song: SongInput | null,
@@ -1053,7 +1250,7 @@ export default function App() {
                     className="p-4 bg-indigo-500/5 border border-indigo-500/20 rounded-xl"
                   >
                     <p className="text-sm text-indigo-300">
-                      Using the default <span className="font-semibold text-white">Gemini 3 Flash</span> models via the server backend.
+                      Using the default <span className="font-semibold text-white">Gemini 3 Flash</span> models directly via the frontend SDK.
                     </p>
                   </motion.div>
                 )}
@@ -1166,8 +1363,58 @@ export default function App() {
                     </label>
                   </div>
                   
-                  {/* Persona Profile Selection */}
+                  {/* Layered Preset Selectors */}
+                  <div className="space-y-4 mb-6">
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                      <div className="space-y-1.5">
+                        <label className="text-[9px] font-black text-zinc-600 uppercase tracking-widest ml-1">Lane (Identity)</label>
+                        <select 
+                          value={selectedLaneId}
+                          onChange={(e) => {
+                            setSelectedLaneId(e.target.value);
+                            setIsUsingLayers(true);
+                          }}
+                          className="w-full bg-zinc-950 text-white border border-zinc-800 rounded-xl px-3 py-2 text-[10px] focus:outline-none focus:border-indigo-500 font-bold uppercase tracking-tight"
+                        >
+                          {STYLE_LANES.map(lane => <option key={lane.id} value={lane.id}>{lane.name}</option>)}
+                        </select>
+                      </div>
+                      <div className="space-y-1.5">
+                        <label className="text-[9px] font-black text-zinc-600 uppercase tracking-widest ml-1">Craft (Technique)</label>
+                        <select 
+                          value={selectedCraftId}
+                          onChange={(e) => {
+                            setSelectedCraftId(e.target.value);
+                            setIsUsingLayers(true);
+                          }}
+                          className="w-full bg-zinc-950 text-white border border-zinc-800 rounded-xl px-3 py-2 text-[10px] focus:outline-none focus:border-indigo-500 font-bold uppercase tracking-tight"
+                        >
+                          {CRAFT_LAYERS.map(craft => <option key={craft.id} value={craft.id}>{craft.name}</option>)}
+                        </select>
+                      </div>
+                      <div className="space-y-1.5">
+                        <label className="text-[9px] font-black text-zinc-600 uppercase tracking-widest ml-1">Heat (Intensity)</label>
+                        <select 
+                          value={selectedHeatId}
+                          onChange={(e) => {
+                            setSelectedHeatId(e.target.value);
+                            setIsUsingLayers(true);
+                          }}
+                          className="w-full bg-zinc-950 text-white border border-zinc-800 rounded-xl px-3 py-2 text-[10px] focus:outline-none focus:border-indigo-500 font-bold uppercase tracking-tight"
+                        >
+                          {HEAT_MODIFIERS.map(heat => <option key={heat.id} value={heat.id}>{heat.name}</option>)}
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Persona Profile Selection (User Saved Profiles) */}
                   <div className="flex flex-wrap gap-2 mb-4">
+                    {profiles.length > 0 && (
+                      <div className="w-full mb-1">
+                        <span className="text-[9px] font-black text-zinc-600 uppercase tracking-widest ml-1">Standalone Presets</span>
+                      </div>
+                    )}
                     {profiles.map(profile => (
                       <button
                         key={profile.id}
@@ -1224,11 +1471,28 @@ export default function App() {
                 
                   {/* Expert Settings / Songwriter Profile Options */}
                   <div className="space-y-4 border-t border-zinc-800/50 pt-8 mt-4">
-                    <div className="flex items-center gap-3 mb-4">
-                      <div className="w-8 h-8 rounded-lg bg-indigo-500/5 flex items-center justify-center text-indigo-400">
-                        <Settings2 className="w-4 h-4" />
+                    <div className="flex items-center justify-between mb-4">
+                      <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 rounded-lg bg-indigo-500/5 flex items-center justify-center text-indigo-400">
+                          <Settings2 className="w-4 h-4" />
+                        </div>
+                        <h3 className="text-[10px] font-black text-indigo-400 uppercase tracking-[0.2em]">Creative DNA Engine</h3>
                       </div>
-                      <h3 className="text-[10px] font-black text-indigo-400 uppercase tracking-[0.2em]">Creative DNA Engine</h3>
+                      
+                      {extractedProfile && (
+                        <button
+                          onClick={handleAbstractDNA}
+                          disabled={isAbstracting}
+                          className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-zinc-900 border border-zinc-800 text-[9px] font-black text-indigo-400 hover:text-white hover:border-indigo-500/50 transition-all uppercase tracking-widest disabled:opacity-50 group"
+                        >
+                          {isAbstracting ? (
+                            <Loader2 className="w-3 h-3 animate-spin" />
+                          ) : (
+                            <GitCompare className="w-3 h-3 group-hover:rotate-180 transition-transform duration-500" />
+                          )}
+                          Abstraction Pass
+                        </button>
+                      )}
                     </div>
 
                     <div className="space-y-6">
@@ -1290,7 +1554,7 @@ export default function App() {
                         </div>
                       </div>
 
-                      {extractedProfile && (
+                      {extractedProfile ? (
                         <>
                           <div className="grid grid-cols-2 gap-4">
                             <div className="space-y-2">
@@ -1314,7 +1578,7 @@ export default function App() {
                             </div>
                           </div>
                           
-                          <div className="space-y-4">
+                          <div className="grid grid-cols-2 gap-4">
                             <div className="space-y-2">
                               <label className="block text-[9px] font-black text-zinc-600 uppercase tracking-widest pl-1">Environment</label>
                               <input type="text" value={extractedProfile.environment || ''} onChange={(e) => updateProfileField('environment', e.target.value)} placeholder="Neon-drenched hallway..." className="w-full bg-zinc-950/30 border border-zinc-800/80 rounded-xl px-4 py-2 text-sm text-zinc-300 focus:outline-none focus:border-indigo-500 transition-colors" />
@@ -1323,17 +1587,53 @@ export default function App() {
                               <label className="block text-[9px] font-black text-zinc-600 uppercase tracking-widest pl-1">Sensory Palette</label>
                               <input type="text" value={extractedProfile.sensoryPalette || ''} onChange={(e) => updateProfileField('sensoryPalette', e.target.value)} placeholder="Ozone, cold rain..." className="w-full bg-zinc-950/30 border border-zinc-800/80 rounded-xl px-4 py-2 text-sm text-zinc-300 focus:outline-none focus:border-indigo-500 transition-colors" />
                             </div>
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-4">
                             <div className="space-y-2">
-                              <label className="block text-[9px] font-black text-zinc-600 uppercase tracking-widest pl-1">Lyrical DNA / Themes</label>
-                              <textarea 
-                                value={extractedProfile.lyricalTheme || ''} 
-                                onChange={(e) => updateProfileField('lyricalTheme', e.target.value)} 
-                                placeholder="Thematic analysis..." 
-                                className="w-full bg-zinc-950/30 border border-zinc-800/80 rounded-xl px-4 py-2 text-sm text-zinc-300 focus:outline-none focus:border-indigo-500 transition-colors min-h-[80px]"
-                              />
+                              <label className="block text-[9px] font-black text-zinc-600 uppercase tracking-widest pl-1">Physical Motif</label>
+                              <input type="text" value={extractedProfile.physicalMotif || ''} onChange={(e) => updateProfileField('physicalMotif', e.target.value)} placeholder="Broken glass, leather..." className="w-full bg-zinc-950/30 border border-zinc-800/80 rounded-xl px-4 py-2 text-sm text-zinc-300 focus:outline-none focus:border-indigo-500 transition-colors" />
+                            </div>
+                            <div className="space-y-2">
+                              <label className="block text-[9px] font-black text-zinc-600 uppercase tracking-widest pl-1">Chorus Behavior</label>
+                              <input type="text" value={extractedProfile.chorusBehavior || ''} onChange={(e) => updateProfileField('chorusBehavior', e.target.value)} placeholder="Blunt, direct..." className="w-full bg-zinc-950/30 border border-zinc-800/80 rounded-xl px-4 py-2 text-sm text-zinc-300 focus:outline-none focus:border-indigo-500 transition-colors" />
                             </div>
                           </div>
+
+                          <div className="space-y-2">
+                            <label className="block text-[9px] font-black text-zinc-600 uppercase tracking-widest pl-1">Lyrical DNA / Themes</label>
+                            <textarea 
+                              value={extractedProfile.lyricalTheme || ''} 
+                              onChange={(e) => updateProfileField('lyricalTheme', e.target.value)} 
+                              placeholder="Thematic analysis..." 
+                              className="w-full bg-zinc-950/30 border border-zinc-800/80 rounded-xl px-4 py-2 text-sm text-zinc-300 focus:outline-none focus:border-indigo-500 transition-colors min-h-[80px]"
+                            />
+                          </div>
                         </>
+                      ) : (
+                        <div className="p-6 border border-dashed border-zinc-800 rounded-2xl text-center">
+                          <p className="text-xs text-zinc-500 mb-4 font-bold uppercase tracking-widest">No Lyrical DNA Extracted</p>
+                          <button
+                            onClick={() => setExtractedProfile({
+                              vocalPersona: "New Artist",
+                              emotionalTone: "Nuanced",
+                              relationshipDynamic: "Complex",
+                              lyricalDensity: "Balanced",
+                              environment: "",
+                              sensoryPalette: "",
+                              physicalMotif: "",
+                              chorusBehavior: "",
+                              lyricalTheme: "",
+                              sonicDNA: { energy: 50, rhythmicComplexity: 50, emotionalDarkness: 50, vocalClarity: 50, productionPolish: 50 },
+                              visualPrompt: "",
+                              musicalPrompt: "",
+                              stylePrompt: ""
+                            })}
+                            className="bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-white hover:border-zinc-600 px-6 py-2 rounded-xl text-[10px] font-black transition-all uppercase tracking-widest"
+                          >
+                            Initialize Studio DNA
+                          </button>
+                        </div>
                       )}
 
                       <div className="space-y-4">

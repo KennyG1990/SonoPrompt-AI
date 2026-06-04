@@ -11,12 +11,6 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Initialize Gemini on server
-let genAI: any = null;
-if (process.env.GEMINI_API_KEY) {
-  genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-}
-
 const upload = multer({ storage: multer.memoryStorage() });
 
 import { Innertube } from 'youtubei.js';
@@ -37,32 +31,6 @@ async function startServer() {
   };
 
   app.use(express.json());
-
-  // Gemini Proxy
-  app.post('/api/gemini/generate', async (req, res) => {
-    try {
-      const { model, contents, config } = req.body;
-      
-      if (!process.env.GEMINI_API_KEY) {
-        return res.status(500).json({ error: 'GEMINI_API_KEY is not set on the server.' });
-      }
-
-      if (!genAI) {
-        genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-      }
-
-      const response = await genAI.models.generateContent({ 
-        model: model || 'gemini-3-flash-preview',
-        contents,
-        config
-      });
-
-      res.json({ text: response.text });
-    } catch (error: any) {
-      console.error('Gemini Proxy Error:', error);
-      res.status(500).json({ error: error.message || 'Failed to generate content' });
-    }
-  });
 
   // API Routes
   app.get('/api/health', (req, res) => {
@@ -778,6 +746,30 @@ async function startServer() {
     } catch (error: any) {
       console.error('Failed to fetch OpenRouter models:', error);
       res.status(500).json({ error: 'Failed to fetch models' });
+    }
+  });
+
+  app.get('/api/metadata/spotify', async (req, res) => {
+    try {
+      const url = req.query.url as string;
+      if (!url) return res.status(400).json({ error: 'Missing URL' });
+      
+      const spotifyRes = await fetch(`https://open.spotify.com/oembed?url=${encodeURIComponent(url)}`, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36'
+        }
+      });
+      
+      if (spotifyRes.ok && spotifyRes.headers.get('content-type')?.includes('application/json')) {
+        const data = await spotifyRes.json();
+        res.json(data);
+      } else {
+        const text = await spotifyRes.text();
+        res.status(spotifyRes.status || 500).json({ error: `Spotify metadata failed: ${text.substring(0, 100)}` });
+      }
+    } catch (error: any) {
+      console.error('Spotify metadata proxy error:', error);
+      res.status(500).json({ error: error.message || 'Failed to fetch Spotify metadata' });
     }
   });
 

@@ -3,49 +3,40 @@ import { GoogleGenAI, Type } from "@google/genai";
 
 let aiInstance: GoogleGenAI | null = null;
 
+function getAI(): GoogleGenAI {
+  if (!aiInstance) {
+    const apiKey = process.env.GEMINI_API_KEY;
+    // Standard AI Studio check. If it's missing, it won't work in the preview unless handled by the platform.
+    if (!apiKey || apiKey === "undefined" || apiKey === "") {
+      console.warn("GEMINI_API_KEY is missing from environment. This might cause failures if not handled by AI Studio platform.");
+    }
+    aiInstance = new GoogleGenAI({ apiKey: apiKey as string });
+  }
+  return aiInstance;
+}
+
 // Proxy object to maintain compatibility with existing call sites
 const ai = {
   models: {
     generateContent: async (params: any) => {
-      const response = await fetch('/api/gemini/generate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: params.model || "gemini-3-flash-preview",
-          contents: params.contents,
-          config: params.config
-        })
-      });
-
-      if (!response.ok) {
-        let errorMsg = 'AI generation failed';
-        try {
-          const errorData = await response.json();
-          errorMsg = errorData.error || errorMsg;
-        } catch (e) {}
-        throw new Error(errorMsg);
-      }
-
-      const data = await response.json();
-      return {
-        text: data.text,
-        response: {
-          text: () => data.text
-        }
-      };
+      return getAI().models.generateContent(params);
+    },
+    generateContentStream: async (params: any) => {
+      return getAI().models.generateContentStream(params);
     }
   },
   chats: {
-    create: () => {
-      throw new Error("Chat mode is not supported via the proxy yet. Use generateContent instead.");
+    create: (params: any) => {
+      return getAI().chats.create(params);
     }
   }
 };
 
 /**
- * Helper to wrap AI calls with automatic retry for 429 errors.
+ * Helper to wrap AI calls with automatic retry for transient errors.
+ * Includes exponential backoff with jitter.
  */
-async function withRetry<T>(fn: () => Promise<T>, maxRetries = 3, initialDelay = 2000): Promise<T> {
+async function withRetry<T>(fn: () => Promise<T>, maxRetries = 5, initialDelay = 2000): Promise<T> {
   let lastError: any;
   for (let i = 0; i < maxRetries; i++) {
     try {
@@ -53,20 +44,49 @@ async function withRetry<T>(fn: () => Promise<T>, maxRetries = 3, initialDelay =
     } catch (error: any) {
       lastError = error;
       
-      // Error message checking for common transient issues
+      // Extract error details safely
       const errorMessage = error?.message?.toLowerCase() || "";
-      const isRateLimit = errorMessage.includes("429") || error?.status === 429;
-      const isRpcError = errorMessage.includes("rpc failed") || errorMessage.includes("xhr error") || 
-                         errorMessage.includes("proxyunarycall") || errorMessage.includes("500") || 
-                         errorMessage.includes("deadline exceeded") || errorMessage.includes("internal error");
-      const isTimeout = errorMessage.includes("timeout") || errorMessage.includes("fetch failed");
+      const status = error?.status || error?.code || error?.error?.code || 0;
+      const statusText = error?.statusText || error?.error?.status || "";
+      
+      // Detection logic for retryable errors
+      const isRateLimit = status === 429 || errorMessage.includes("429") || errorMessage.includes("too many requests");
+      const isServiceUnavailable = status === 503 || status === 504 || 
+                                   errorMessage.includes("503") || errorMessage.includes("504") ||
+                                   errorMessage.includes("service unavailable") || 
+                                   errorMessage.includes("high demand") || 
+                                   errorMessage.includes("unavailable") ||
+                                   statusText.includes("UNAVAILABLE");
+      const isInternalError = status === 500 || errorMessage.includes("500") || 
+                              errorMessage.includes("internal error") || 
+                              errorMessage.includes("rpc failed") ||
+                              errorMessage.includes("xhr error") ||
+                              errorMessage.includes("deadline exceeded");
+      const isNetworkError = errorMessage.includes("fetch failed") || 
+                             errorMessage.includes("failed to fetch") || 
+                             errorMessage.includes("network error") ||
+                             errorMessage.includes("timeout") ||
+                             errorMessage.includes("proxy");
 
-      if ((isRateLimit || isRpcError || isTimeout) && i < maxRetries - 1) {
-        const delay = initialDelay * Math.pow(2, i); // Exponential backoff
-        console.warn(`Gemini API transient error (${error?.status || '500'}). Retrying in ${delay}ms... (Attempt ${i + 1}/${maxRetries})`, error);
+      const isRetryable = isRateLimit || isServiceUnavailable || isInternalError || isNetworkError;
+
+      if (isRetryable && i < maxRetries - 1) {
+        // Exponential backoff: initialDelay * 2^i
+        // Plus random jitter to prevent "thundering herd" effect
+        const jitter = Math.random() * 1000;
+        const delay = (initialDelay * Math.pow(2, i)) + jitter;
+        
+        console.warn(`Gemini API transient error (${status || 'unknown'}). Retrying in ${Math.round(delay)}ms... (Attempt ${i + 1}/${maxRetries})`, {
+          message: error.message,
+          status,
+          statusText
+        });
+        
         await new Promise(resolve => setTimeout(resolve, delay));
         continue;
       }
+      
+      // If not retryable or max retries reached, throw
       throw error;
     }
   }
@@ -174,18 +194,37 @@ async function getFileBase64(file: File): Promise<string> {
 }
 
 async function resolveSongMetadata(url: string): Promise<string> {
-  try {
-    if (url.includes('youtube.com') || url.includes('youtu.be')) {
-      const res = await fetch(`/api/youtube/info?url=${encodeURIComponent(url)}`);
+  const tryFetch = async (targetUrl: string, options?: RequestInit) => {
+    try {
+      const res = await withRetry(() => fetch(targetUrl, options));
       if (res.ok && res.headers.get('content-type')?.includes('application/json')) {
-        const info = await res.json();
+        return await res.json();
+      }
+    } catch (e) {
+      console.warn(`Fetch to ${targetUrl} failed:`, e);
+    }
+    return null;
+  };
+
+  try {
+    const origin = typeof window !== 'undefined' ? window.location.origin : '';
+    
+    if (url.includes('youtube.com') || url.includes('youtu.be')) {
+      const info = await tryFetch(`${origin}/api/youtube/info?url=${encodeURIComponent(url)}`);
+      if (info && info.title) {
         return `\n\n[SYSTEM METADATA RESOLUTION]: The URL has been natively resolved to the ACTUAL track: "${info.title}" ${info.author ? 'by ' + info.author : ''}. You MUST base your analysis or generation solely on this real-world track. Do NOT hallucinate the song title.`;
       }
     } else if (url.includes('spotify.com')) {
-      const res = await fetch(`https://open.spotify.com/oembed?url=${encodeURIComponent(url)}`);
-      if (res.ok && res.headers.get('content-type')?.includes('application/json')) {
-        const info = await res.json();
+      // Use the server as a proxy for Spotify to avoid CORS issues if they arise
+      const info = await tryFetch(`${origin}/api/metadata/spotify?url=${encodeURIComponent(url)}`);
+      if (info && info.title) {
         return `\n\n[SYSTEM METADATA RESOLUTION]: The URL has been natively resolved to the ACTUAL track: "${info.title}". You MUST base your analysis or generation solely on this real-world track. Do NOT hallucinate the song title.`;
+      }
+      
+      // Fallback to direct client-side fetch if server proxy fails or isn't implemented
+      const directInfo = await tryFetch(`https://open.spotify.com/oembed?url=${encodeURIComponent(url)}`);
+      if (directInfo && directInfo.title) {
+        return `\n\n[SYSTEM METADATA RESOLUTION]: The URL has been natively resolved to the ACTUAL track: "${directInfo.title}". You MUST base your analysis or generation solely on this real-world track. Do NOT hallucinate the song title.`;
       }
     }
   } catch (e) {
@@ -194,7 +233,16 @@ async function resolveSongMetadata(url: string): Promise<string> {
   return "";
 }
 
-const ANALYSIS_PROMPT_CORE = `You are an expert musicologist and AI music prompt engineer. Analyze the song in detail.
+const ANALYSIS_PROMPT_CORE = `You are a Senior Musicologist and technical Analyst. Your task is to provide a HIGH-ACCURACY analysis.
+
+CRITICAL: ACCURACY OVER CREATIVITY. You MUST use your Google Search tool to verify the specifics of the actual track provided. 
+
+GROUNDING ENFORCEMENT:
+1. Do NOT guess the genre based on the Artist Name. Provocative or experimental names (e.g., "ORGAVSM") do NOT always imply experimental genres (e.g., "Hyperpop"). 
+2. If the song is R&B/Soul, characterize it as such. 
+3. If you cannot find verified information for a specific point (like BPM), provide a reasoned estimate but label it as [ESTIMATED]. 
+
+DO NOT HALLUCINATE: If the song is a niche track and you cannot find verified audio descriptions or lyrics, you MUST state: "Detailed sonic data not verified for this specific track. Analysis is based on [Artist Name]'s general style and provided metadata."
 
 Provide a comprehensive breakdown of its musical DNA, including:
 1. **Genre & Sub-genres**: Be as specific as possible.
@@ -202,7 +250,7 @@ Provide a comprehensive breakdown of its musical DNA, including:
 3. **Musical Structure**: Verse/chorus progression, bridge characteristics, intro/outro, and overall arrangement.
 4. **Instrumentation**: Key instruments, synthesizers, drum machines, or acoustic elements.
 5. **Vocal Style**: Timbre, delivery, effects (e.g., reverb, autotune), and emotional tone.
-6. **Lyric Analysis**: A deep dive into the lyrical themes, word-tone, and metaphor usage. Explain the lyrics like a poem to someone who hasn't heard them.
+6. **Lyric Analysis**: A deep dive into the lyrical themes, word-tone, and metaphor usage. Explain the lyrics' narrative, emotional weight, and visceral impact to someone who hasn't heard them. Focus on the raw intent behind the words.
 7. **Mood & Vibe**: The overall atmosphere and emotional resonance.
 8. **Production Quality**: Lo-fi, polished, wall-of-sound, intimate, etc.
 
@@ -229,87 +277,138 @@ You MUST return your response as a strict JSON object with exactly two keys:
 2. "profile": A nested JSON object containing strictly the following string keys: 
    - "vocalPersona", "emotionalTone", "relationshipDynamic", "lyricalDensity", "environment", "sensoryPalette", "physicalMotif", "chorusBehavior", "musicalPrompt", "stylePrompt", "lyricalTheme" (Strings)
    - "sonicDNA": { "energy": 0-100, "rhythmicComplexity": 0-100, "emotionalDarkness": 0-100, "vocalClarity": 0-100, "productionPolish": 0-100 }
-   - "visualPrompt": A descriptive 2-line prompt for an image generator (no artist names, just vibes).`;
+   - "visualPrompt": A descriptive 2nd-person prompt for an image generator. If the song is sensual, intimate, or "Sexy RnB", focus on a nocturnal, high-gloss, cinematic environment with heavy shadows, rich textures (silk, leather, skin), and atmospheric lighting (deep indigo, crimson). (no artist names, just vibes).
+
+CRITICAL JSON HYGIENE: The output MUST be a single, valid JSON object. 
+- All string values (especially the 'markdown' field) MUST have internal line breaks replaced with \\n (double backslash n).
+- All internal double quotes in string values MUST be escaped as \\" (double backslash quote). 
+- DO NOT use raw newlines inside string values.
+- DO NOT truncate the response.`;
 
 function extractJson(text: string): string {
   if (!text) return "";
-  // Try to find markdown block first
-  const jsonMatch = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
-  if (jsonMatch) return jsonMatch[1].trim();
   
-  // Fallback: Find the first { or [ and last } or ]
-  const firstBrace = text.indexOf('{');
-  const firstBracket = text.indexOf('[');
-  let start = -1;
-  let end = -1;
-
-  if (firstBrace !== -1 && (firstBracket === -1 || firstBrace < firstBracket)) {
-    start = firstBrace;
-    end = text.lastIndexOf('}');
-  } else if (firstBracket !== -1) {
-    start = firstBracket;
-    end = text.lastIndexOf(']');
+  // 1. Try to find markdown blocks first
+  const blocks = Array.from(text.matchAll(/```(?:json)?\s*([\s\S]*?)\s*```/ig));
+  if (blocks.length > 0) {
+    // If multiple blocks, try to find the one that looks most like our expected JSON
+    for (const block of blocks.reverse()) {
+      const content = block[1].trim();
+      if (content.startsWith('{') && content.endsWith('}')) return content;
+    }
+    return blocks[blocks.length - 1][1].trim();
   }
   
+  // 2. Fallback: Find the first { or [ and last } or ]
+  // We try to find the outermost matching pair. 
+  // If there are multiple separate objects, we usually want the one that contains "profile" or "markdown"
+  let start = text.indexOf('{');
+  let end = text.lastIndexOf('}');
+  
   if (start !== -1 && end !== -1 && end > start) {
+    // Basic validation: is it likely the whole response or just a fragment?
+    const candidates = [];
+    
+    // Find all potential JSON start/end pairs and check them
+    let searchStart = 0;
+    while ((searchStart = text.indexOf('{', searchStart)) !== -1) {
+      let searchEnd = text.lastIndexOf('}');
+      while (searchEnd > searchStart) {
+        const potential = text.substring(searchStart, searchEnd + 1).trim();
+        if (potential.includes('"markdown"') || potential.includes('"profile"') || potential.includes('"segments"')) {
+          candidates.push(potential);
+        }
+        searchEnd = text.lastIndexOf('}', searchEnd - 1);
+      }
+      searchStart++;
+      if (candidates.length > 5) break; // Don't over-search
+    }
+    
+    if (candidates.length > 0) {
+      // Return the longest one which is likely the full object
+      return candidates.sort((a, b) => b.length - a.length)[0];
+    }
+
     return text.substring(start, end + 1).trim();
   }
   
   return text.trim();
 }
-
 /**
  * Sanitizes a potential JSON string from an AI model.
- * Fixes common issues like invalid escape characters (e.g., \') or raw newlines in strings.
+ * Fixes common issues like invalid escape characters, raw newlines, or trailing commas.
  */
 function sanitizeJson(jsonStr: string): string {
   if (!jsonStr) return "";
   
-  let cleaned = jsonStr;
+  let cleaned = jsonStr.trim();
   
-  // 1. Fix common AI invalid escapes
-  // JSON only supports escaping: " \ / b f n r t uXXXX
-  // We replace invalid escapes (like \' or \.) with the character itself.
+  // 1. Strip potential Markdown code block indicators
+  cleaned = cleaned.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
+
+  // 2. Fix invalid escapes (e.g., \. or \* which are common AI failures)
+  // We keep \", \\, \/, \b, \f, \n, \r, \t, \u
   cleaned = cleaned.replace(/\\([^"\\\/bfnrtu])/g, '$1');
   
-  // 2. Handle invalid \u escapes (u not followed by 4 hex digits)
+  // 3. Handle invalid \u escapes
   cleaned = cleaned.replace(/\\u(?![0-9a-fA-F]{4})/g, 'u');
   
-  // 3. Strip trailing commas in objects and arrays
+  // 4. Strip trailing commas
   cleaned = cleaned.replace(/,\s*([}\]])/g, '$1');
-  
-  // 4. Fix unescaped control characters (ASCII 0-31) which are invalid in JSON strings
-  // Most commonly this is raw newlines or tabs inside string values.
-  // We'll replace them with their escaped equivalents.
-  // This is best handled by safeJsonParse's recovery mode if the first parse fails,
-  // but we can do a light pass here for horizontal tabs.
+
+  // 5. Fix common horizontal tabs and other control characters
   cleaned = cleaned.replace(/\t/g, "\\t");
+  cleaned = cleaned.replace(/\r/g, "\\r");
 
   return cleaned;
 }
 
 /**
- * Robust JSON parsing that handles minor formatting errors.
+ * Robust JSON parsing that handles minor formatting errors, specifically unescaped newlines and nested quotes.
  */
 function safeJsonParse(jsonStr: string): any {
   const sanitized = sanitizeJson(jsonStr);
+  
   try {
     return JSON.parse(sanitized);
   } catch (initialError: any) {
     console.warn("Initial JSON parse failed, attempting recovery...", initialError.message);
     
     try {
-      // Recovery attempt 1: Try to handle raw newlines in string values
-      // This is a common AI failure mode. Standard JSON.parse will fail on raw newlines.
-      const fixedNewlines = sanitized.replace(/(^|[^\\])\n/g, "$1\\n");
-      return JSON.parse(fixedNewlines);
-    } catch (e) {
-      // Recovery attempt 2: If we still fail, it might be a double quote issue or something else.
-      // At this point we throw the original error or a combined one.
-      throw new Error(`JSON Parse Error: ${initialError.message}. Content: ${sanitized.substring(0, 100)}...`);
+      // Recovery attempt 1: Fix unescaped newlines inside string values
+      // We look for any newline that is NOT followed by a structure that looks like the start of a new key ("key":)
+      // or the end of an object/array (} , ]).
+      let fixed = sanitized.replace(/\n(?!(?:[ \t]*["}\]])|(?:[ \t]*["\w]+":))/g, "\\n");
+      return JSON.parse(fixed);
+    } catch (e2) {
+      try {
+        // Recovery attempt 2: Escape unescaped double quotes in middle of sentences
+        // This regex looks for double quotes that are surrounded by characters that 
+        // usually suggest they are part of the text rather than JSON structure.
+        let fixedQuotes = sanitized.replace(/(?<=[a-zA-Z0-9.,!?;:\s])"(?=[a-zA-Z0-9.,!?;:\s])/g, '\\"');
+        // Re-apply newline fix
+        fixedQuotes = fixedQuotes.replace(/\n(?!(?:[ \t]*["}\]])|(?:[ \t]*["\w]+":))/g, "\\n");
+        return JSON.parse(fixedQuotes);
+      } catch (e3) {
+        try {
+          // Recovery attempt 3: Most aggressive - escape ALL quotes that aren't property-adjacent
+          // (i.e., property name or value start/end)
+          let aggressive = sanitized.replace(/(?<![:\s[{,])"(?![\s\],}:])/g, '\\"');
+          return JSON.parse(aggressive);
+        } catch (e4) {
+          // Final attempt: provide context
+          const pos = initialError.pos !== undefined ? initialError.pos : 0;
+          const start = Math.max(0, pos - 100);
+          const end = Math.min(sanitized.length, pos + 200);
+          const errorContext = sanitized.substring(start, end);
+          console.error("All JSON recovery attempts failed.");
+          throw new Error(`Failed to parse JSON response: ${initialError.message}. Error near: ...${errorContext}...`);
+        }
+      }
     }
   }
 }
+
 
 /**
  * Analyzes audio/video files to extract song metadata.
@@ -317,27 +416,31 @@ function safeJsonParse(jsonStr: string): any {
 export async function analyzeAudioFile(file: File, config: AIConfig = { provider: 'gemini' }): Promise<AnalysisResult> {
   const base64Data = await getFileBase64(file);
 
-  const response = await withRetry(() => ai.models.generateContent({
-    model: "gemini-3-flash-preview",
-    contents: {
-      parts: [
-        {
-          inlineData: {
-            mimeType: file.type,
-            data: base64Data,
-          },
-        },
-        {
-          text: ANALYSIS_PROMPT_CORE + "\n\nIMPORTANT: Return ONLY the JSON object. Do not include any conversational filler before or after the JSON.",
-        },
-      ],
-    },
-    config: {
-      tools: [{ googleSearch: {} }],
-    },
-  }));
-
   try {
+    const response = await withRetry(() => ai.models.generateContent({
+      model: "gemini-3-flash-preview",
+      contents: {
+        parts: [
+          {
+            inlineData: {
+              mimeType: file.type,
+              data: base64Data,
+            },
+          },
+          {
+            text: ANALYSIS_PROMPT_CORE + "\n\nIMPORTANT: Return ONLY the JSON object. Do not include any conversational filler before or after the JSON.",
+          },
+        ],
+      },
+      config: {
+        tools: [{ googleSearch: {} }],
+        generationConfig: {
+          responseMimeType: "application/json",
+          maxOutputTokens: 8192
+        }
+      },
+    }));
+
     const jsonStr = extractJson(response.text || "{}");
     const parsed = safeJsonParse(jsonStr);
     return {
@@ -345,10 +448,10 @@ export async function analyzeAudioFile(file: File, config: AIConfig = { provider
       profile: parsed.profile || { vocalPersona: "", emotionalTone: "", relationshipDynamic: "", lyricalDensity: "", environment: "", sensoryPalette: "", physicalMotif: "", chorusBehavior: "", musicalPrompt: "", stylePrompt: "" }
     };
   } catch (e) {
-    console.error("Failed to parse JSON response:", e, response.text);
+    console.error("Critical analysis failure or Gemini error:", e);
     return { 
-      markdown: response.text || "Failed to parse analysis.", 
-      profile: { vocalPersona: "", emotionalTone: "", relationshipDynamic: "", lyricalDensity: "", environment: "", sensoryPalette: "", physicalMotif: "", chorusBehavior: "", musicalPrompt: "", stylePrompt: "" } 
+      markdown: `### Analysis Unavailable\n\nThe AI analysis service encountered a temporary error. Please try again soon.\n\nError details: ${e instanceof Error ? e.message : 'Unknown internal error'}`, 
+      profile: { vocalPersona: "Unknown", emotionalTone: "Unknown", relationshipDynamic: "Unknown", lyricalDensity: "Unknown", environment: "Cloudy Studio", sensoryPalette: "Neutral", physicalMotif: "None", chorusBehavior: "Standard", musicalPrompt: "", stylePrompt: "" } 
     };
   }
 }
@@ -471,15 +574,19 @@ You MUST use your internal training data and your Google Search tool to identify
   }
   contentsData.push(prompt + "\n\nIMPORTANT: Return ONLY the JSON object. Do not include any conversational filler before or after the JSON.");
 
-  const response = await withRetry(() => ai.models.generateContent({
-    model: "gemini-3-flash-preview",
-    contents: contentsData,
-    config: {
-      tools: [{ googleSearch: {} }],
-    },
-  }));
-
   try {
+    const response = await withRetry(() => ai.models.generateContent({
+      model: "gemini-3-flash-preview",
+      contents: contentsData,
+      config: {
+        tools: [{ googleSearch: {} }],
+        generationConfig: {
+          responseMimeType: "application/json",
+          maxOutputTokens: 8192
+        }
+      },
+      }));
+
     const jsonStr = extractJson(response.text || "{}");
     const parsed = safeJsonParse(jsonStr);
     return {
@@ -487,8 +594,89 @@ You MUST use your internal training data and your Google Search tool to identify
       profile: parsed.profile || { vocalPersona: "", emotionalTone: "", relationshipDynamic: "", lyricalDensity: "", environment: "", sensoryPalette: "", physicalMotif: "", chorusBehavior: "", musicalPrompt: "", stylePrompt: "" }
     };
   } catch (e) {
-    console.error("Failed to parse JSON response:", e);
-    return { markdown: response.text || "Failed to parse analysis.", profile: { vocalPersona: "", emotionalTone: "", relationshipDynamic: "", lyricalDensity: "", environment: "", sensoryPalette: "", physicalMotif: "", chorusBehavior: "", musicalPrompt: "", stylePrompt: "" } };
+    console.error("Failed to analyze song link or Gemini error:", e);
+    return { 
+      markdown: `### Link Analysis Unavailable\n\nFailed to retrieve metadata for "${linkOrName}". This can happen with age-restricted or private links.\n\nError: ${e instanceof Error ? e.message : 'Transient service failure'}`, 
+      profile: { vocalPersona: "Unknown", emotionalTone: "Unknown", relationshipDynamic: "Unknown", lyricalDensity: "Unknown", environment: "Digitized Void", sensoryPalette: "Grayscale", physicalMotif: "Lost Signals", chorusBehavior: "Faded", musicalPrompt: "", stylePrompt: "" } 
+    };
+  }
+}
+
+/**
+ * Abstraction Pass: Rewrites concrete DNA fields as abstract patterns.
+ */
+export async function abstractProfileFields(profile: ExtractedProfile, config: AIConfig = { provider: 'gemini' }): Promise<ExtractedProfile> {
+  const prompt = `You are an expert musicologist and creative director. 
+You are given concrete details extracted from a reference song's Creative DNA.
+Your task is to rewrite each field as an abstract pattern that captures the underlying FUNCTION of the detail (its emotional or structural purpose), but not its surface manifestation.
+
+STRICT CONSTRAINTS:
+1. HARD LENGTH LIMIT: Each abstracted field MUST be between 3 and 8 words.
+2. PLAIN STRUCTURAL ENGLISH: Use the register of a producer giving direction. Avoid poetic, flowery, or pseudo-technical jargon.
+3. FORBIDDEN VOCABULARY: Do NOT use these words: shimmering, crystalline, synthetic, luminescent, liminal, kinetic, entropic, refracted, conductive, particulate, gravitational, hardened, decelerated, vertical, radial, viscous, ethereal, pulse, resonance, frequency.
+4. NO LEAKS: The output must NOT reference any specific common noun, proper noun, location, or object from the original (e.g., no "cars", "streets", "coffee", "jackets").
+5. FIVE-SONG TEST: For each field, verify that a skilled lyricist could write five DIFFERENT songs from that field using totally different surface imagery. If it's too specific, rewrite it shorter.
+6. REGISTER CHECK: If it sounds like poetry, science fiction, or a physics textbook, it is WRONG. Keep it as plain as a work order.
+
+EXAMPLES:
+- Vocal Persona:
+  - WRONG: "A processed, crystalline suspension of air pushed through synthetic vulnerability" (Too ornate/Forbidden words)
+  - CORRECT: "Close-mic breathy delivery with low-fidelity distortion" (7 words)
+- Physical Motif:
+  - WRONG: "The entropic drift of a fading particulate ghost into the void" (Too poetic/Forbidden words)
+  - CORRECT: "Metal surfaces catching and reflecting sharp light" (7 words)
+- Environment:
+  - WRONG: "Luminescence in shortest wavelengths refracted through fluid conductivity" (Too technical/Forbidden words)
+  - CORRECT: "Enclosed sterile room with cold metallic surfaces" (7 words)
+- Chorus Behavior:
+  - WRONG: "A radial kinetic rupture into a state of unresisted descent" (Too abstract/Forbidden words)
+  - CORRECT: "Brief high-energy explosion of rhythmic vocal stabs" (7 words)
+
+INPUT DNA:
+${JSON.stringify({
+  vocalPersona: profile.vocalPersona,
+  emotionalTone: profile.emotionalTone,
+  relationshipDynamic: profile.relationshipDynamic,
+  lyricalDensity: profile.lyricalDensity,
+  environment: profile.environment,
+  sensoryPalette: profile.sensoryPalette,
+  physicalMotif: profile.physicalMotif,
+  chorusBehavior: profile.chorusBehavior,
+  lyricalTheme: profile.lyricalTheme
+}, null, 2)}
+
+SELF-CHECK BEFORE OUTPUT:
+- Word count: 3-8 words per field?
+- No forbidden words?
+- No original nouns?
+- Functional producer-style tone?
+
+Return ONLY the JSON object with the same keys as the input.`;
+
+  if (config.provider === 'openrouter') {
+    const text = await callOpenRouter(prompt, config, 'analysis');
+    try {
+      const jsonStr = extractJson(text || "{}");
+      const parsed = safeJsonParse(jsonStr);
+      return { ...profile, ...parsed };
+    } catch (e) {
+      console.error("OpenRouter abstraction failed", e);
+      return profile;
+    }
+  }
+
+  try {
+    const response = await withRetry(() => ai.models.generateContent({
+      model: "gemini-3-flash-preview",
+      contents: { parts: [{ text: prompt }] },
+    }));
+
+    const jsonStr = extractJson(response.text || "{}");
+    const parsed = safeJsonParse(jsonStr);
+    return { ...profile, ...parsed };
+  } catch (e) {
+    console.error("Gemini abstraction parse failed", e);
+    return profile;
   }
 }
 
@@ -525,6 +713,22 @@ export async function generateLyrics(
 - CRITICAL DIRECTIVE: This is a COMPLETELY FRESH CONTEXT. Disregard any previous song styles, themes, or patterns from earlier generations. You MUST create something unique and original for this specific request.
 - CRITICAL DIRECTIVE: The lyrics MUST be about a concrete situation, objects, or a specific story. Avoid vague "vibes" or existential drift. The whole song must reflect a single, coherent narrative regardless of the lyric style or genre.
 - ABSTRACTION LIMIT: Keep abstraction below 10%. Use the "show, don't tell" rule with physical details.
+- STEERING AS DIRECTION, NOT VOCABULARY: The "STRICT SONGWRITER PROFILE" fields (Environment, Motif, etc.) are your SOP (Standard Operating Procedure), NOT your word list. You MUST fulfill the functional requirement of these fields using NEW imagery and fresh language. UNLESS specifically requested, you are FORBIDDEN from using the literal words found in the Environment, Physical Motif, or Sensory Palette fields as surface lyrics. Show the effect, do not quote the brief.
+- DYNAMIC CHORUS EVOLUTION: Lyrical repetition is the enemy of the Story Arc. Even if the melody and structure remain stable (for hook consistency), you MUST evolve the lyrics of each chorus instance to reflect the emotional progress specified in the "STORY ARC MANDATE". Chorus 1 should be the setup; Chorus 2 should be more intense or shifted; Chorus 3 (final) should be the emotional climax or resolution.
+- ANTI-CLICHÉ: Avoid "neon lights", "rain on windows", "lost in the city", and other overused AI songwriting tropes unless explicitly requested in the Environment or Motif fields.
+- NOCTURNAL/SENSUAL IDENTITY: If the sub-genre or mood involves "Sensual", "Intimate", "Sexy RnB", "Erotic", or "Seductive" themes:
+ARTIST IDENTITY: nocturnal, sensual, intimate, stylish, emotionally damaged, secretive, physically immediate, seductive, hook-driven, high-gloss, breathy vocal feel.
+CORE RULE: Sound like the same ARTIST, not the same SONG. Lane is erotic tension, secrecy, temptation, dependence, possession, guilt, physical need, and the power dynamic of dominance and submission. Seductive first, dangerous second, poetic third.
+MAIN GOAL: Stay in the moment. No emotional distance.
+PERSPECTIVE LOCK (mandatory): Every song MUST be written from ONE of two perspectives — never both, never neutral. Choose at the start of generation and hold that choice across every section.
+DOMINANT PERSPECTIVE: The narrator is the one giving commands, taking, holding, claiming, marking, controlling the pace, deciding what is given and withheld. Verbs are active and possessive. Address to the other person is directive. Sentence energy is patient, in control, deliberate. Pleasure is something the narrator administers, watches, or extracts. The narrator is never asking — they are stating, instructing, or taking.
+SUBMISSIVE PERSPECTIVE: The narrator is the one offering, surrendering, begging, opening, waiting, being held, taken, marked, used, ruined. Verbs are receptive and yielding. Address to the other person is pleading, inviting, or thanking. Sentence energy is breathless, urgent, undone. Pleasure is something the narrator receives, endures, or earns by giving up control. The narrator is never commanding — they are asking, offering, or being acted upon.
+If no perspective is specified externally, default to SUBMISSIVE. Do not blend the two perspectives within a single song. The narrator is one or the other for the entire track.
+SEXUAL TENSION: Unmistakable body-level tension (touch, breath, pressure, restraint, mark). Chorus must be sexually direct in the chosen perspective's register — Dominant choruses are blunt commands and statements of possession; Submissive choruses are blunt pleas, offers, and surrenders. Default toward lust over metaphor.
+EXPLICITNESS: Do not avoid explicit sexual phrasing or blunt intimate phrases. Profanity as sexual language, not filler. D/s vocabulary is welcome where it serves the song — holding, kneeling, marking, breath, pressure, mercy, please, take, give, mine, yours, ruined, undone — but is never costume. The dynamic must feel lived-in, not performed.
+WRITING: Concrete physical details. Every section must increase desire, risk, or tension. Verses cinematic, chorus simple and physical. The chosen perspective dictates which body the camera is closest to — Dominant lyrics observe the partner's body and reactions; Submissive lyrics inhabit the narrator's own body being acted upon.
+- CHORUS BEHAVIOR: You MUST strictly adhere to the "Chorus Behavior" variable if defined. If it says "blunt", be blunt. If it says "abstract", be abstract.
+- FRESHNESS: Invent a fresh environment and relationship dynamic for every song unless specified. Avoid luxury clichés unless they are used in a concrete, cinematic way.
 - MEANING EXCERPT: You must provide a short (2-3 sentence) prologue excerpt explaining the deep meaning and story behind the lyrics.
 - SECTIONAL INSIGHTS: For EVERY section (Verse, Chorus, etc.), you MUST provide:
     1. "explanation": A 1-2 sentence explanation of the narrative purpose and lyrical subtext of this specific section.
@@ -540,14 +744,14 @@ DO NOT use musical, structural, or production terminology in the lyrics.
 NARRATIVE THEME / TOPIC:
 "${theme}"
 
-${profile ? `SONGWRITER PSYCHOLOGICAL PROFILE:
+${profile ? `STRICT SONGWRITER PROFILE (MANDATORY STEERING):
 - Vocal Persona: ${profile.vocalPersona}
 - Emotional Tone / Flavor: ${profile.emotionalTone}
 - Relationship Dynamic: ${profile.relationshipDynamic}
 - Lyrical Density: ${profile.lyricalDensity}
 - Lyrical DNA / Themes: ${profile.lyricalTheme || 'None analyzed'}
-${profile.environment ? `- Environment: ${profile.environment}\n` : ''}${profile.sensoryPalette ? `- Sensory Palette: ${profile.sensoryPalette}\n` : ''}${profile.physicalMotif ? `- Physical Motif: ${profile.physicalMotif}\n` : ''}${profile.chorusBehavior ? `- Chorus Behavior: ${profile.chorusBehavior}\n` : ''}` : ''}
-${visualAnchor ? `CRITICAL INSTRUCTION: You must visually anchor the scene. The object or concept "[${visualAnchor}]" MUST be physically interacted with or explicitly described in the first verse to ground the song in reality.\n\n` : ''}
+${profile.environment ? `- Environment (MANDATORY): ${profile.environment}\n` : ''}${profile.sensoryPalette ? `- Sensory Palette (MANDATORY): ${profile.sensoryPalette}\n` : ''}${profile.physicalMotif ? `- Physical Motif (MANDATORY): ${profile.physicalMotif}\n` : ''}${profile.chorusBehavior ? `- Chorus Behavior (MANDATORY): ${profile.chorusBehavior}\n` : ''}` : ''}
+${visualAnchor ? `CRITICAL VISUAL ANCHOR: The object or concept "[${visualAnchor}]" MUST be physically interacted with or explicitly described in the first verse to ground the song in reality. This object should be central to the scene.\n\n` : ''}
 ${injectVocalTags ? `CRITICAL VOCAL TAGS: Strategically insert audio-generator meta-tags. Use parentheses for background vocals (like '(echo)') and brackets for delivery style changes (like '[Aggressive building vocal]', '[choir swells]', '(ad-lib: yeah!)').\n\n` : ''}
 ${rhymeComplexity === 'slant' ? `CRITICAL RHYME SCHEME: DO NOT use simple perfect AABB rhymes (like fire/desire). You MUST use modern slant rhymes, vowel-matching (assonance), and internal rhyming. Avoid cliché pairings at all costs.\n\n` : rhymeComplexity === 'multi' ? `CRITICAL RHYME SCHEME: Write using complex, multi-syllabic rhyme schemes (e.g., matching 3-4 syllables at the end of lines). Use internal rhymes. DO NOT use generic perfect rhymes (AABB). Avoid cliché pairings.\n\n` : rhymeComplexity === 'narrative' ? `CRITICAL RHYME SCHEME: This song is FREE VERSE / NARRATIVE. DO NOT prioritize rhyming. Focus on poetic storytelling, flow, and evocative imagery. If rhymes occur, they should be accidental or very subtle. The priority is the narrative journey and emotional precision.\n\n` : ''}
 ${emotionalArc && emotionalArc !== 'static' ? `STORY ARC MANDATE: The lyrics must follow this emotional progression across the song structure: "${emotionalArc}". The first verse should start at the beginning of this arc, and the bridge/final chorus should reach the climax or resolution of this arc. Do not let the emotional tone remain flat.\n\n` : ''}
@@ -564,7 +768,13 @@ Your output MUST ONLY contain the actual sung lyrics and the section labels (e.g
 
 Return the result as a JSON object containing:
 1. "segments": a JSON array where each segment has a "label" (e.g., "Verse 1", "Chorus"), "text" (the lyrics), "explanation" (narrative subtext), and "transition" (how it leads to the next part).
-2. "excerpt": a 2-3 sentence string explaining the meaning/story of the song.`;
+2. "excerpt": a 2-3 sentence string explaining the meaning/story of the song.
+
+CRITICAL JSON HYGIENE: The output MUST be a single, valid JSON object. 
+- All string values MUST have internal line breaks replaced with \\n (double backslash n).
+- All internal double quotes in string values MUST be escaped as \\" (double backslash quote). 
+- DO NOT use raw newlines inside string values.
+- DO NOT truncate the response.`;
 
   if (song) {
     if (song.type === 'link') {
@@ -616,7 +826,11 @@ Return the result as a JSON object containing:
     },
     config: {
       tools: [{ googleSearch: {} }],
-      safetySettings
+      safetySettings,
+      generationConfig: {
+        responseMimeType: "application/json",
+        maxOutputTokens: 8192
+      }
     },
   }));
 
@@ -645,48 +859,74 @@ Return the result as a JSON object containing:
   }
 }
 
-export async function analyzeAndGenerateStudioTrack(song: SongInput, config: AIConfig = { provider: 'gemini' }): Promise<{ title: string, prompt: string, styleTags: string, lyrics: string, analysis: string, meaning: string }> {
+export async function analyzeAndGenerateStudioTrack(song: SongInput, config: AIConfig = { provider: 'gemini' }): Promise<{ title: string, prompt: string, styleTags: string, lyrics: string, analysis: string, meaning: string, visualPrompt?: string }> {
+  // --- STEP 1: INITIAL ANALYSIS (SonoPrompt) ---
+  const isUrl = song.type === 'link';
+  let initialAnalysis: AnalysisResult;
+  if (isUrl) {
+    initialAnalysis = await analyzeSongLink(song.link, config);
+  } else {
+    initialAnalysis = await analyzeAudioFile(song.file, config);
+  }
+
+  // --- STEP 2: ABSTRACTION PASS ---
+  const abstractedProfile = await abstractProfileFields(initialAnalysis.profile, config);
+
+  // --- STEP 3: STUDIO GENERATION (Lyrical Prompt) ---
   const parts: any[] = [];
   
-  const systemText = `You are an expert musicologist, songwriter, and AI music prompt engineer.
+  const systemText = `You are a Senior Musicologist and elite Songwriter.
   
-- CRITICAL DIRECTIVE: This is a COMPLETELY FRESH CONTEXT. Disregard any previous song styles, themes, or patterns from earlier generations. You MUST create something unique and original for this specific request.
-- CRITICAL ANALYSIS: Analyze the provided reference song to understand its structure, rhythm, mood, genre, and specifically the VOCAL STYLE (timbre, delivery, emotion).`;
+- CRITICAL DIRECTIVE: ACCURACY FIRST. This is a COMPLETELY FRESH CONTEXT.
+- GROUNDING: The provided analysis is already verified. Use the "ABSTRACTED DNA" as your creative blueprint.
+- NOUN-BLOCK: Avoid using specific objects, people, or places from the original song. Instead, use the abstract patterns provided.
+- NOCTURNAL/SENSUAL IDENTITY: If the sub-genre or mood involves "Sensual", "Intimate", "Sexy RnB", "Erotic", or "Seductive" themes:
+ARTIST IDENTITY: nocturnal, sensual, intimate, stylish, emotionally damaged, secretive, physically immediate, seductive, hook-driven, high-gloss, breathy vocal feel.
+CORE RULE: Sound like the same ARTIST, not the same SONG. Lane is erotic tension, secrecy, temptation, dependence, possession, guilt, physical need, and the power dynamic of dominance and submission. Seductive first, dangerous second, poetic third.
+MAIN GOAL: Stay in the moment. No emotional distance.
+PERSPECTIVE LOCK (mandatory): Every song MUST be written from ONE of two perspectives — never both, never neutral. Choose at the start of generation and hold that choice across every section.
+DOMINANT PERSPECTIVE: The narrator is the one giving commands, taking, holding, claiming, marking, controlling the pace, deciding what is given and withheld. Verbs are active and possessive. Address to the other person is directive. Sentence energy is patient, in control, deliberate. Pleasure is something the narrator administers, watches, or extracts. The narrator is never asking — they are stating, instructing, or taking.
+SUBMISSIVE PERSPECTIVE: The narrator is the one offering, surrendering, begging, opening, waiting, being held, taken, marked, used, ruined. Verbs are receptive and yielding. Address to the other person is pleading, inviting, or thanking. Sentence energy is breathless, urgent, undone. Pleasure is something the narrator receives, endures, or earns by giving up control. The narrator is never commanding — they are asking, offering, or being acted upon.
+If no perspective is specified externally, default to SUBMISSIVE. Do not blend the two perspectives within a single song. The narrator is one or the other for the entire track.
+SEXUAL TENSION: Unmistakable body-level tension (touch, breath, pressure, restraint, mark). Chorus must be sexually direct in the chosen perspective's register — Dominant choruses are blunt commands and statements of possession; Submissive choruses are blunt pleas, offers, and surrenders. Default toward lust over metaphor.
+EXPLICITNESS: Do not avoid explicit sexual phrasing or blunt intimate phrases. Profanity as sexual language, not filler. D/s vocabulary is welcome where it serves the song — holding, kneeling, marking, breath, pressure, mercy, please, take, give, mine, yours, ruined, undone — but is never costume. The dynamic must feel lived-in, not performed.
+WRITING: Concrete physical details. Every section must increase desire, risk, or tension. Verses cinematic, chorus simple and physical. The chosen perspective dictates which body the camera is closest to — Dominant lyrics observe the partner's body and reactions; Submissive lyrics inhabit the narrator's own body being acted upon.
+- STEERING AS DIRECTION, NOT VOCABULARY: The "ABSTRACTED DNA" fields (Environment, Motif, etc.) are your SOP (Standard Operating Procedure), NOT your word list. You MUST fulfill the functional requirement of these fields using NEW imagery and fresh language. UNLESS specifically requested, you are FORBIDDEN from using the literal words found in the Environment, Physical Motif, or Sensory Palette fields as surface lyrics. Show the effect, do not quote the brief.
+- DYNAMIC CHORUS EVOLUTION: You MUST evolve the lyrics of each chorus instance to reflect emotional progression. Chorus 1 should be the setup; Chorus 2 should be more intense or shifted; Chorus 3 (final) should be the emotional climax or resolution. Lyrical repetition is the enemy of narrative weight.`;
 
-  let promptText = `TASK: Analyze the reference song and generate a NEW, UNIQUE studio track from scratch.
+  let promptText = `TASK: Generate a NEW, UNIQUE studio track based on the following ABSTRACTED DNA.
 
-CRITICAL INSTRUCTION: If a URL (like a YouTube or Spotify link) is provided as the Reference Song, use the SYSTEM METADATA RESOLUTION tag if present to identify the song. Base your analysis completely on the real-world song identified. DO NOT guess or hallucinate the song based purely on the URL string.
+ABSTRACTED DNA (CREATIVE BLUEPRINT):
+- Vocal Persona: ${abstractedProfile.vocalPersona}
+- Emotional Tone: ${abstractedProfile.emotionalTone}
+- Relationship Dynamic: ${abstractedProfile.relationshipDynamic}
+- Environment Pattern: ${abstractedProfile.environment}
+- Sensory Palette: ${abstractedProfile.sensoryPalette}
+- Physical Motif Pattern: ${abstractedProfile.physicalMotif}
+- Chorus Behavior: ${abstractedProfile.chorusBehavior}
+- Lyrical Density: ${abstractedProfile.lyricalDensity}
+- Lyrical DNA / Themes: ${abstractedProfile.lyricalTheme || 'None analyzed'}
 
-DYNAMIC VARIABLE GENERATION:
-You MUST CHOOSE FRESHLY and INTERNALLY before writing. Do NOT default to "dimly lit room" or "intimate" unless the song absolutely demands it. Avoid clichés.
-1. a distinct environment (be specific: rainy highway, neon-drenched arcade, silent desert, etc.)
-2. a relationship dynamic with clear tension or risk
-3. one dominant emotional flavor
-4. one recurring physical motif
-5. one sensory palette
-6. one chorus behavior
+Based on this blueprint, you must generate the following for a NEW song:
 
-Based on your analysis, you must generate the following for a NEW song:
-
-1. "analysis": A detailed paragraph analyzing the original song, specifically highlighting the vocal description, lyrical themes (explain them like a poem to someone who hasn't heard them), and how they drive the emotion.
-2. "lyrics": A JSON array of segments where each segment has "label", "text", "explanation", and "transition". The THEME and EMOTION of these new lyrics MUST be based entirely on the vocal description you just analyzed.
+1. "analysis": A detailed paragraph analyzing the original song's SPIRIT (not its surface), specifically highlighting how its vocal delivery type and thematic architecture drive emotion.
+2. "lyrics": A JSON array of segments where each segment has "label", "text", "explanation", and "transition". The THEME and EMOTION of these new lyrics MUST be based entirely on the abstracted patterns above.
 3. "meaning": A 2-3 sentence explanation of the storyline and emotional core of these specific lyrics. Keep abstraction below 10%.
-4. "title": A catchy, fitting title for the new song based on the lyrics.
+4. "title": A catchy, fitting title for the new song based on the lyrics. (IMPORTANT: The title MUST NOT be all capital letters. Use standard Title Case or Sentence Case.)
 5. "prompt": A Song Description describing the musical DNA, mood, and vocal style. You MUST explicitly include all environmental and songwriter profile details (Environment, Sensory Palette, Physical Motif, Chorus Behavior, Vocal Persona) seamlessly within this prompt string. The "prompt" field MUST ONLY contain the optimized prompt text itself, no section headers or meta-analysis.
 6. "styleTags": Comma-separated genres and vibes (e.g., "synthwave, 80s, dark"). MUST ONLY CONTAIN ALPHANUMERIC CHARACTERS AND SPACES. NO SPECIAL CHARACTERS LIKE & OR -.
 
 CRITICAL CONSTRAINT: The COMBINED total length of the "prompt" and the "styleTags" fields MUST be STRICTLY less than 1000 characters.
 
+CRITICAL JSON HYGIENE: The output MUST be a single, valid JSON object. 
+- All string values (especially the 'lyrics' and 'analysis' fields) MUST have internal line breaks replaced with \\n (double backslash n).
+- All internal double quotes in string values MUST be escaped as \\" (double backslash quote). 
+- DO NOT use raw newlines inside string values.
+- DO NOT truncate the response.
+
 Return the result STRICTLY as a JSON object with the keys: "title", "prompt", "styleTags", "lyrics", "analysis", and "meaning".`;
 
-  if (song.type === 'link') {
-    const meta = await resolveSongMetadata(song.link);
-    promptText = `Reference Song: "${song.link}" ${meta}\n\n` + promptText;
-    
-    // We no longer attempt to force-download audio for links to avoid API breakage.
-    // We rely on System Metadata Resolution and Search Grounding.
-    promptText = `CONTEXT FOR ASSISTANT: The physical audio file for this track is NOT being provided directly to avoid extraction errors. You must use your internal musicology knowledge and your Search Tool to identify the specific production DNA, vocal style, and lyrical nuances of "${song.link}" (${meta}). Provide a high-fidelity analysis.\n\n` + promptText;
-  } else {
+  if (song.type === 'file') {
     const base64Data = await getFileBase64(song.file);
     parts.push({
       inlineData: {
@@ -702,7 +942,6 @@ Return the result STRICTLY as a JSON object with the keys: "title", "prompt", "s
       const jsonStr = extractJson(text || "{}");
       const data = safeJsonParse(jsonStr);
       
-      // Ensure lyrics are a string
       let lyricsStr = data.lyrics;
       if (Array.isArray(data.lyrics)) {
         lyricsStr = data.lyrics.map((l: any) => {
@@ -718,8 +957,9 @@ Return the result STRICTLY as a JSON object with the keys: "title", "prompt", "s
         prompt: data.prompt || '',
         styleTags: data.styleTags || '',
         lyrics: lyricsStr || '',
-        analysis: data.analysis || '',
-        meaning: data.meaning || ''
+        analysis: data.analysis || initialAnalysis.markdown,
+        meaning: data.meaning || '',
+        visualPrompt: initialAnalysis.profile.visualPrompt
       };
     } catch (e) {
       console.error("OpenRouter parse failed", e);
@@ -736,26 +976,29 @@ Return the result STRICTLY as a JSON object with the keys: "title", "prompt", "s
     { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' }
   ];
 
-  const response = await withRetry(() => ai.models.generateContent({
-    model: "gemini-3-flash-preview",
-    contents: {
-      parts: [
-        { text: systemText },
-        ...parts,
-        { text: promptText + "\n\nIMPORTANT: Return ONLY the JSON object. Do not include any conversational filler before or after the JSON." }
-      ]
-    },
-    config: {
-      tools: [{ googleSearch: {} }],
-      safetySettings
-    },
-  }));
-
   try {
+    const response = await withRetry(() => ai.models.generateContent({
+      model: "gemini-3-flash-preview",
+      contents: {
+        parts: [
+          { text: systemText },
+          ...parts,
+          { text: promptText + "\n\nIMPORTANT: Return ONLY the JSON object. Do not include any conversational filler before or after the JSON." }
+        ]
+      },
+      config: {
+        tools: [{ googleSearch: {} }],
+        safetySettings,
+        generationConfig: {
+          responseMimeType: "application/json",
+          maxOutputTokens: 8192
+        }
+      },
+    }));
+
     const jsonStr = extractJson(response.text || "{}");
     const data = safeJsonParse(jsonStr);
     
-    // Ensure lyrics are a string
     let lyricsStr = data.lyrics;
     if (Array.isArray(data.lyrics)) {
       lyricsStr = data.lyrics.map((l: any) => {
@@ -771,12 +1014,20 @@ Return the result STRICTLY as a JSON object with the keys: "title", "prompt", "s
       prompt: data.prompt || '',
       styleTags: data.styleTags || '',
       lyrics: lyricsStr || '',
-      analysis: data.analysis || '',
-      meaning: data.meaning || ''
+      analysis: data.analysis || initialAnalysis.markdown,
+      meaning: data.meaning || '',
+      visualPrompt: initialAnalysis.profile.visualPrompt
     };
   } catch (e) {
-    console.error("Failed to parse generation JSON", e);
-    throw new Error("Failed to generate track details from analysis.");
+    console.error("Studio Track generation failed:", e);
+    return {
+      title: "Untitled Studio Project",
+      prompt: "Balanced production, clear vocals, melodic structure.",
+      styleTags: "melodic, studio, clean",
+      lyrics: "[Verse 1]\nThe words are waiting in the silence...\n\n[Chorus]\nBuilding up a new direction...",
+      analysis: "Full analysis was interrupted by a service error. The system has generated a generic template based on the intent.",
+      meaning: "A song about recovery and starting fresh."
+    };
   }
 }
 
@@ -946,7 +1197,7 @@ CRITICAL INSTRUCTION: If a URL (like a YouTube or Spotify link) is provided as t
 Lyrics:
 ${contextLyrics}
 
-Return ONLY the suggested title, without quotes or extra text.`;
+Return ONLY the suggested title, without quotes or extra text. (IMPORTANT: The title MUST NOT be all capital letters. Use standard Title Case or Sentence Case.)`;
 
   if (song.type === 'link') {
     const meta = await resolveSongMetadata(song.link);
@@ -975,30 +1226,78 @@ Return ONLY the suggested title, without quotes or extra text.`;
     { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' }
   ];
 
+  try {
+    const response = await withRetry(() => ai.models.generateContent({
+      model: "gemini-3-flash-preview",
+      contents: { parts },
+      config: {
+        tools: [{ googleSearch: {} }],
+        safetySettings
+      },
+    }));
+
+    return response.text?.trim().replace(/^["']|["']$/g, '') || "Untitled Song";
+  } catch (e) {
+    console.error("Title suggestion failed:", e);
+    return "Untitled Vision";
+  }
+}
+
+export async function translateLyrics(text: string, targetLanguage: string, config: AIConfig = { provider: 'gemini' }): Promise<string> {
+  const isSnippet = text.length < 100 && !text.includes('\n');
+  const context = isSnippet ? "specific phrase or line from a song" : "set of song lyrics";
+  
+  const prompt = `You are a professional songwriter and translator. 
+Translate the following ${context} into ${targetLanguage}.
+
+CRITICAL INSTRUCTIONS:
+1. Maintain the emotional tone, poetic feel, and rhythm of the original.
+2. If it's a snippet, stay true to the meter so it fits back into the song.
+3. If it's full lyrics, preserve all structure labels like [Verse] or [Chorus].
+4. Output ONLY the translated text. No explanations or intro.
+
+Text to translate:
+"""
+${text}
+"""`;
+
+  if (config.provider === 'openrouter') {
+    return await callOpenRouter(prompt, config);
+  }
+
   const response = await withRetry(() => ai.models.generateContent({
     model: "gemini-3-flash-preview",
-    contents: { parts },
-    config: {
-      tools: [{ googleSearch: {} }],
-      safetySettings
-    },
+    contents: { parts: [{ text: prompt }] },
   }));
 
-  return response.text?.trim().replace(/^["']|["']$/g, '') || "Untitled Song";
+  return response.text?.trim() || text;
 }
 
 /**
- * Generates a mood visual (album art) based on a descriptive prompt.
+ * Generates a mood visual (album art) based on a descriptive prompt, song theme, and optional artist identity.
  */
-export async function generateMoodVisual(prompt: string): Promise<string> {
+export async function generateMoodVisual(prompt: string, artistIdentity?: string, songTheme?: string): Promise<string> {
+  const isSensual = artistIdentity?.includes('nocturnal') || artistIdentity?.includes('sensual') || artistIdentity?.includes('Sexy RnB');
+
+  const identityVisualCore = isSensual ? `
+VISUAL IDENTITY: nocturnal, high-gloss, intimate, high-fashion aesthetic. 
+MOOD: Heavy shadows (chiaroscuro), cinematic lighting, physical immediacy, deep shadows, rich textures (silk, leather, rain on glass, skin). 
+PALETTE: Deep indigo, midnight blacks, muted gold, or crimson accents. 
+FEEL: Dangerous but seductive, secretive, expensive, emotionally heavy.` : "";
+
+  const themeContext = songTheme ? `\nSong Theme/Story: ${songTheme}` : "";
+
   try {
-    const response = await ai.models.generateContent({
+    const response = await withRetry(() => ai.models.generateContent({
       model: 'gemini-3.1-flash-image-preview',
       contents: {
         parts: [
           {
             text: `Generate a high-fidelity, high-concept minimalist album art cover. 
-Description: ${prompt}
+Visual Blueprint: ${prompt}
+${themeContext}
+${artistIdentity ? `Artist Identity Context: ${artistIdentity}` : ''}
+${identityVisualCore}
 Style: Professional music aesthetic, elegant composition, high resolution, 1K. 
 No text, no letters, no logos. Just the visual essence.`,
           },
@@ -1009,7 +1308,7 @@ No text, no letters, no logos. Just the visual essence.`,
           aspectRatio: "1:1",
         },
       },
-    });
+    }));
 
     const part = response.candidates?.[0]?.content?.parts.find(p => p.inlineData);
     if (part?.inlineData?.data) {
