@@ -16,6 +16,73 @@ const upload = multer({ storage: multer.memoryStorage() });
 import { Innertube } from 'youtubei.js';
 import ytdl from '@distube/ytdl-core';
 
+interface CacheEntry<T> {
+  value: T;
+  expiry: number;
+}
+
+class MemoryCache {
+  private cache = new Map<string, CacheEntry<any>>();
+
+  get<T>(key: string): T | null {
+    const entry = this.cache.get(key);
+    if (!entry) return null;
+    if (Date.now() > entry.expiry) {
+      this.cache.delete(key);
+      return null;
+    }
+    return entry.value;
+  }
+
+  set<T>(key: string, value: T, ttlMs: number): void {
+    const expiry = Date.now() + ttlMs;
+    this.cache.set(key, { value, expiry });
+  }
+}
+
+const cache = new MemoryCache();
+
+const rateLimitStore = new Map<string, { count: number; resetTime: number }>();
+
+function createRateLimiter(maxRequests: number, windowMs: number) {
+  return (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    const ip = (req.headers['x-forwarded-for'] as string)?.split(',')[0] || req.socket.remoteAddress || 'unknown';
+    const path = req.path;
+    const key = `${ip}:${path}`;
+    
+    const now = Date.now();
+    const window = rateLimitStore.get(key);
+    
+    if (!window || now > window.resetTime) {
+      rateLimitStore.set(key, {
+        count: 1,
+        resetTime: now + windowMs
+      });
+      res.setHeader('X-RateLimit-Limit', maxRequests);
+      res.setHeader('X-RateLimit-Remaining', maxRequests - 1);
+      res.setHeader('X-RateLimit-Reset', Math.ceil((now + windowMs) / 1000));
+      return next();
+    }
+    
+    if (window.count >= maxRequests) {
+      res.setHeader('X-RateLimit-Limit', maxRequests);
+      res.setHeader('X-RateLimit-Remaining', 0);
+      res.setHeader('X-RateLimit-Reset', Math.ceil(window.resetTime / 1000));
+      return res.status(429).json({
+        error: 'Too many requests. Please try again later.'
+      });
+    }
+    
+    window.count++;
+    res.setHeader('X-RateLimit-Limit', maxRequests);
+    res.setHeader('X-RateLimit-Remaining', maxRequests - window.count);
+    res.setHeader('X-RateLimit-Reset', Math.ceil(window.resetTime / 1000));
+    next();
+  };
+}
+
+const ALLOWED_STREAM_HOSTS = new Set<string>();
+
 async function startServer() {
   const app = express();
   const PORT = 3000;
@@ -77,12 +144,14 @@ async function startServer() {
       
       const { tokens } = await oauth2Client.getToken(code as string);
       
+      const targetOrigin = `${protocol}://${host}`;
+      
       res.send(`
         <html>
           <body>
             <script>
               if (window.opener) {
-                window.opener.postMessage({ type: 'YOUTUBE_AUTH_SUCCESS', tokens: ${JSON.stringify(tokens)} }, '*');
+                window.opener.postMessage({ type: 'YOUTUBE_AUTH_SUCCESS', tokens: ${JSON.stringify(tokens)} }, '${targetOrigin}');
                 window.close();
               } else {
                 window.location.href = '/';
@@ -180,6 +249,31 @@ async function startServer() {
     'https://pipedapi.astartes.nl'
   ];
 
+  // Populate dynamic whitelisted stream domains for SSRF protection
+  const addHostsFromUrls = (urls: string[]) => {
+    for (const u of urls) {
+      try {
+        const parsed = new URL(u);
+        ALLOWED_STREAM_HOSTS.add(parsed.hostname.toLowerCase());
+      } catch (e) {}
+    }
+  };
+  addHostsFromUrls(INVIDIOUS_INSTANCES);
+  addHostsFromUrls(PIPED_INSTANCES);
+  addHostsFromUrls([
+    'https://api.cobalt.tools', 
+    'https://cobalt.hyonsu.com',
+    'https://api.cobalttm.site',
+    'https://cobalt.api.vve.moe',
+    'https://api.cobalt.best',
+    'https://api.cobalt.moe',
+    'https://api.cobalt.run',
+    'https://cobalt.shrubbyapp.com'
+  ]);
+  ALLOWED_STREAM_HOSTS.add('youtube.com');
+  ALLOWED_STREAM_HOSTS.add('www.youtube.com');
+  ALLOWED_STREAM_HOSTS.add('youtu.be');
+
   function extractVideoId(url: string) {
     const match = url.match(/(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=))([^&]{11})/);
     return match ? match[1] : null;
@@ -263,6 +357,12 @@ async function startServer() {
   }
 
   async function getPipedAudio(videoId: string) {
+    const cacheKey = `piped:${videoId}`;
+    const cached = cache.get<any>(cacheKey);
+    if (cached) {
+      return cached;
+    }
+
     const shuffled = [...PIPED_INSTANCES].sort(() => Math.random() - 0.5);
     for (const instance of shuffled) {
       try {
@@ -277,12 +377,14 @@ async function startServer() {
           const data = await res.json();
           if (data.audioStreams && data.audioStreams.length > 0) {
             const best = data.audioStreams.sort((a: any, b: any) => (b.bitrate || 0) - (a.bitrate || 0))[0];
-            return { 
+            const result = { 
               url: best.url, 
               title: data.title, 
               mimeType: best.mimeType || 'audio/mpeg',
               author: data.uploader || 'YouTube Artist'
             };
+            cache.set(cacheKey, result, 5 * 60 * 1000); // 5 minutes cache
+            return result;
           }
         }
       } catch (e: any) {}
@@ -293,12 +395,14 @@ async function startServer() {
       const url = `https://www.youtube.com/watch?v=${videoId}`;
       const cobaltUrl = await getCobaltAudio(url);
       if (cobaltUrl) {
-        return {
+        const result = {
           url: cobaltUrl,
           title: 'YouTube Stream',
           mimeType: 'audio/mpeg',
           author: 'YouTube'
         };
+        cache.set(cacheKey, result, 5 * 60 * 1000); // 5 minutes cache
+        return result;
       }
     } catch (e) {}
 
@@ -312,6 +416,12 @@ async function startServer() {
       if (!videoId) {
         return res.status(400).json({ error: 'Invalid YouTube URL' });
       }
+
+      const cacheKey = `youtube:info:${videoId}`;
+      const cached = cache.get<any>(cacheKey);
+      if (cached) {
+        return res.json(cached);
+      }
       
       // Attempt 1: Fetch from official oEmbed for metadata (more reliable than Invidious instances)
       try {
@@ -322,12 +432,14 @@ async function startServer() {
           // We also try to get a working stream URL from Piped for the "Recorder"
           const pipedInfo = await getPipedAudio(videoId);
           
-          return res.json({
+          const result = {
             title: pipedInfo?.title || oembedData.title,
             thumbnail: oembedData.thumbnail_url || `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
             author: pipedInfo?.author || oembedData.author_name,
             streamUrl: pipedInfo?.url || null
-          });
+          };
+          cache.set(cacheKey, result, 10 * 60 * 1000); // 10 minutes cache
+          return res.json(result);
         }
       } catch (e) {
         console.warn('oEmbed fetch failed, falling back to Invidious', e);
@@ -335,24 +447,44 @@ async function startServer() {
 
       const { data: info } = await getInvidiousInfo(videoId);
       
-      res.json({
+      const result = {
         title: info.title,
         thumbnail: info.videoThumbnails?.[0]?.url || `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
         author: info.author,
         streamUrl: null
-      });
+      };
+      cache.set(cacheKey, result, 10 * 60 * 1000); // 10 minutes cache
+      res.json(result);
     } catch (error: any) {
       console.error('YouTube info error:', error);
       res.status(500).json({ error: error.message || 'Failed to fetch video info' });
     }
   });
 
-  app.get('/api/youtube/stream-proxy', async (req, res) => {
+  app.get('/api/youtube/stream-proxy', createRateLimiter(30, 5 * 60 * 1000), async (req, res) => {
     try {
-      const url = req.query.url as string;
-      if (!url) return res.status(400).send('No URL');
+      const urlString = req.query.url as string;
+      if (!urlString) return res.status(400).send('No URL');
       
-      const fetchRes = await fetch(url, {
+      let parsedUrl: URL;
+      try {
+        parsedUrl = new URL(urlString);
+      } catch (e) {
+        return res.status(400).send('Invalid URL format');
+      }
+
+      const hostname = parsedUrl.hostname.toLowerCase();
+      
+      // SSRF whitelist check: only allow googlevideo.com and registered instances
+      const isGoogleVideo = hostname.endsWith('.googlevideo.com');
+      const isAllowedHost = ALLOWED_STREAM_HOSTS.has(hostname) || hostname === 'googlevideo.com';
+      
+      if (!isGoogleVideo && !isAllowedHost) {
+        console.warn(`SSRF attempt blocked: direct stream request to unwhitelisted host: ${hostname}`);
+        return res.status(403).send('Forbidden: Target host is not whitelisted');
+      }
+      
+      const fetchRes = await fetch(urlString, {
         headers: {
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
           'Referer': 'https://www.youtube.com/',
@@ -386,7 +518,7 @@ async function startServer() {
     }
   });
 
-  app.get('/api/youtube/download', async (req, res) => {
+  app.get('/api/youtube/download', createRateLimiter(30, 5 * 60 * 1000), async (req, res) => {
     try {
       const url = req.query.url as string;
       const videoId = extractVideoId(url);
@@ -394,16 +526,21 @@ async function startServer() {
         return res.status(400).send('Invalid YouTube URL');
       }
 
-      // Metadata fetch for filename
+      // Metadata fetch for filename: use cache if available, otherwise oEmbed
       let title = videoId;
-      try {
-        const oembedUrl = `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`;
-        const oembedRes = await fetch(oembedUrl);
-        if (oembedRes.ok && oembedRes.headers.get('content-type')?.includes('application/json')) {
-           const oData = await oembedRes.json();
-           title = oData.title || videoId;
-        }
-      } catch (e) {}
+      const cachedInfo = cache.get<any>(`youtube:info:${videoId}`);
+      if (cachedInfo) {
+        title = cachedInfo.title || videoId;
+      } else {
+        try {
+          const oembedUrl = `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`;
+          const oembedRes = await fetch(oembedUrl);
+          if (oembedRes.ok && oembedRes.headers.get('content-type')?.includes('application/json')) {
+             const oData = await oembedRes.json();
+             title = oData.title || videoId;
+          }
+        } catch (e) {}
+      }
       const safeTitle = title.replace(/[/\\?%*:|"<>]/g, '-');
 
       // Attempt 1: Piped Audio (Server-side bypass)
@@ -456,7 +593,7 @@ async function startServer() {
         // Quietly fallback
       }
 
-      // Attempt 2: youtubei.js (Very robust, mimics browser)
+      // Attempt 3: youtubei.js (Very robust, mimics browser)
       try {
         const ytInstance = await getYt();
         const stream = await ytInstance.download(videoId, {
@@ -479,7 +616,7 @@ async function startServer() {
         // Quietly fallback
       }
 
-      // Attempt 3: @distube/ytdl-core (Another robust alternative)
+      // Attempt 4: @distube/ytdl-core (Another robust alternative)
       try {
         const info = await ytdl.getInfo(url);
         const format = ytdl.chooseFormat(info.formats, { quality: 'highestaudio', filter: 'audioonly' });
@@ -506,30 +643,6 @@ async function startServer() {
         } else {
            console.warn('@distube/ytdl-core fallback engaged.');
         }
-      }
-
-      // Attempt 4: Piped API (Reliable fallback)
-      try {
-        const pipedInfo = await getPipedAudio(videoId);
-        if (pipedInfo) {
-          const pipedRes = await fetch(pipedInfo.url);
-          if (pipedRes.ok && pipedRes.body) {
-            const ext = pipedInfo.mimeType.includes('mp4') ? 'm4a' : 'webm';
-            const safeTitle = (pipedInfo.title || videoId).replace(/[^\w\s-]/gi, '_');
-            res.header('Content-Disposition', `attachment; filename="${safeTitle}.${ext}"`);
-            res.header('Content-Type', pipedInfo.mimeType);
-            
-            if (typeof Readable.fromWeb === 'function') {
-              Readable.fromWeb(pipedRes.body as any).pipe(res);
-            } else {
-              const arrayBuffer = await pipedRes.arrayBuffer();
-              res.send(Buffer.from(arrayBuffer));
-            }
-            return;
-          }
-        }
-      } catch (err) {
-        console.warn('Piped download failed, falling back', err);
       }
 
       // Attempt 5: play-dl
