@@ -3,9 +3,11 @@ import { Upload, Link as LinkIcon, Music, Loader2, Sparkles, RefreshCw, AlertCir
 import { useDropzone } from 'react-dropzone';
 import ReactMarkdown from 'react-markdown';
 import { motion, AnimatePresence } from 'motion/react';
-import { analyzeAudioFile, analyzeSongLink, compareSongs, generateLyrics, rewriteLyricSegment, suggestSongTitle, ghostwriteNextLine, generateMoodVisual, abstractProfileFields, SongInput, LyricSegment, ExtractedProfile, AnalysisResult, AIConfig } from './services/geminiService';
+import { analyzeAudioFile, analyzeSongLink, compareSongs, generateLyrics, rewriteLyricSegment, suggestSongTitle, ghostwriteNextLine, generateMoodVisual, abstractProfileFields, detectLyricsAndAnalyzeDNA, SongInput, LyricSegment, ExtractedProfile, AnalysisResult, AIConfig } from './services/geminiService';
 import Studio from './components/Studio';
 import SonicRadarChart from './components/SonicRadarChart';
+import StyleJoystick from './components/StyleJoystick';
+import MetricGrid from './components/MetricGrid';
 
 export interface LyricistProfile {
   id: string;
@@ -54,6 +56,26 @@ LANE: erotic tension, secrecy, temptation, dependence, possession, guilt, physic
     id: 'dream-pop-shoegaze',
     name: 'Dream Pop / Shoegaze',
     rules: 'STYLE: Dream Pop / Shoegaze. IMAGERY: Abstract, washed-out, ethereal, blurry. VOCAL RULE: Vowel-heavy word choices that flow over the beat like a stream. NARRATIVE: No linear throughline or story required; prioritize mood. FUNCTION: Words are texture and instrument first, meaning second. Themes: Fading memories, light, distance, haze.'
+  },
+  {
+    id: 'industrial-goth-wave',
+    name: 'Industrial Goth / Darkwave',
+    rules: 'STYLE: Industrial Goth / Darkwave. IMAGERY: Mechanical, dystopian, metallic, cold concrete, decay, bone, rust, clinical, monolithic. THEMES: Machine-human synthesis, terminal romance, submission to systems, ritual, control. VOCABULARY: Steel, ritual, burn, wire, cold, voltage, flesh. FLOW: Monotone, driving, rhythmically sharp, chants.'
+  },
+  {
+    id: 'eccentric-art-pop',
+    name: 'Eccentric Art Pop / Baroque',
+    rules: 'STYLE: Eccentric Art Pop / Baroque Pop. PERSPECTIVE: Highly theatrical, erratic, intellectual. IMAGERY: Surrealism, classical architecture, museums, insects, historical relics, circus ornaments. THEMES: Intellectual anxiety, madness, high art, performative existentialism. SYNTAX: Ornately constructed, dense, shifting tempos, dramatic jumps.'
+  },
+  {
+    id: 'grungy-alt-rock',
+    name: '90s Grunge / Noise Rock',
+    rules: 'STYLE: 90s Grunge / Noise Rock. PERSPECTIVE: Self-deprecating, cynical, first-person. IMAGERY: Dirt, basement-shows, cigarette smoke, cheap beer, stained flannels, rot, apathy. THEMES: Disillusionment, societal alienation, physical numbness, raw frustration. FLOW: Loud-quiet-loud dynamic. Slurred, raw, anti-polished, blunt statements.'
+  },
+  {
+    id: 'cosmic-ambient-folk',
+    name: 'Cosmic Ambient / Neo-Folk',
+    rules: 'STYLE: Cosmic Ambient Folk / Neo-Folk. IMAGERY: Astrological, celestial, deep woods, bone-white light, oceans, geological time, constellations. THEMES: Intergenerational memory, cosmic insignificance, ghosts, ancient spirits. FLOW: Long, floating lines with open-vowel phrasing. Haunting, slow, majestic, ancient feel.'
   }
 ];
 
@@ -72,6 +94,21 @@ export const CRAFT_LAYERS = [
     id: 'spoken-word',
     name: 'Spoken Word',
     rules: 'CRAFT: Style: Spoken Word / Hip-Hop Soul. STRUCTURE: Long lines, prose-like cadence. RHYTHM: Deliberately un-singable, speech-pattern rhythm. CONTENT: Philosophical, political, or introspective. LANGUAGE: High-vocabulary, intellectual but visceral.'
+  },
+  {
+    id: 'cryptic-mythologist',
+    name: 'Cryptic Mythologist',
+    rules: 'CRAFT: Cryptic Mythologist. Frame contemporary or personal events entirely through historical, classical, or occult mythology. Use allegories, ancient symbols, tarot archetypes, and folklore references instead of literal modern phrasing.'
+  },
+  {
+    id: 'mathematical-architect',
+    name: 'Mathematical Architect',
+    rules: 'CRAFT: Mathematical Architect. Extreme emphasis on symmetry, nested internal rhyme structures, hard syllable counting, and complex meter. Phrases are meticulously engineered with parallel sentence patterns and precise, clockwork acoustic pairings.'
+  },
+  {
+    id: 'stream-of-consciousness',
+    name: 'Stream-of-Consciousness',
+    rules: 'CRAFT: Stream of Consciousness Novelist. Write in unstructured, runaway prose blocks. Prioritize memory-hopping, parenthetical asides, run-on thoughts, and conversational interruptions. Sounds like a private diary entry spoken without taking a breath.'
   }
 ];
 
@@ -95,6 +132,16 @@ export const HEAT_MODIFIERS = [
     id: 'explicit',
     name: 'Explicit',
     rules: 'HEAT: Blunt, direct, unmapped, highly sexual or aggressive. Do not avoid explicit phrasing or blunt physical truth. No filter.'
+  },
+  {
+    id: 'sub-zero-detached',
+    name: 'Sub-Zero Detached',
+    rules: 'HEAT: Sub-Zero Detached. Completely cool, emotionless, clinical, and deadpan delivery. The lyrics describe extreme horror, physical bliss, or devastation with the tone of an autopsy report or a technical manual. Zero self-pity or excitement.'
+  },
+  {
+    id: 'radioactive-frenzy',
+    name: 'Radioactive Frenzy',
+    rules: 'HEAT: Radioactive Frenzy. Hyper-manic, screaming, deliriously unhinged. Use rapid-fire shifts, manic repetition, exclamatory disruptions, and unstable emotional peaks. The narrator sounds on the absolute edge of a breakdown or spiritual ascension.'
   }
 ];
 
@@ -145,11 +192,18 @@ export default function App() {
   const [lyricsTheme, setLyricsTheme] = useState('');
   const [extractedProfile, setExtractedProfile] = useState<ExtractedProfile | null>(null);
   
+  // Lyrical DNA Decryption state
+  const [detectedLyrics, setDetectedLyrics] = useState<string | null>(null);
+  const [lyricalDNADecryption, setLyricalDNADecryption] = useState<string | null>(null);
+  const [isDetectingLyrics, setIsDetectingLyrics] = useState(false);
+  
   // Layered Personality state
   const [selectedLaneId, setSelectedLaneId] = useState('confessional-indie');
   const [selectedCraftId, setSelectedCraftId] = useState('visceral-poet');
   const [selectedHeatId, setSelectedHeatId] = useState('standard');
   const [isUsingLayers, setIsUsingLayers] = useState(true);
+  const [joystickBlendDescription, setJoystickBlendDescription] = useState<string | null>(null);
+  const [isUsingJoystick, setIsUsingJoystick] = useState(false);
 
   const [lyricistPersonality, setLyricistPersonality] = useState('');
   const [profiles, setProfiles] = useState<LyricistProfile[]>([]);
@@ -326,12 +380,12 @@ export default function App() {
     }
   };
 
-  // Effect to sync layers to personality when they change, but ONLY if we are in layers mode
+  // Effect to sync layers to personality when they change, but ONLY if we are in layers mode and not using joystick
   useEffect(() => {
-    if (isUsingLayers) {
+    if (isUsingLayers && !isUsingJoystick) {
       syncLayeredPersonality(selectedLaneId, selectedCraftId, selectedHeatId);
     }
-  }, [selectedLaneId, selectedCraftId, selectedHeatId, isUsingLayers]);
+  }, [selectedLaneId, selectedCraftId, selectedHeatId, isUsingLayers, isUsingJoystick]);
 
   const handlePersonalityChange = (val: string) => {
     setLyricistPersonality(val);
@@ -452,6 +506,8 @@ export default function App() {
       setGeneratedLyrics(null);
       setLyricsPrompt(null);
       setSongTitle(null);
+      setDetectedLyrics(null);
+      setLyricalDNADecryption(null);
     } else if (action === 'lyrics') {
       setGeneratedLyrics(null);
       setLyricsPrompt(null);
@@ -963,6 +1019,33 @@ export default function App() {
     }
   };
 
+  const handleDetectLyricalDNA = async () => {
+    let s: SongInput | null = analyzeSong;
+    if (analyzeInputType === 'link' && analyzeLink.trim()) {
+      s = { type: 'link', link: analyzeLink.trim() };
+    }
+
+    if (!s) {
+      setError("Please provide a song to analyze (Link or Upload) first.");
+      return;
+    }
+
+    setIsDetectingLyrics(true);
+    setError(null);
+    setSuccess(null);
+
+    try {
+      const data = await detectLyricsAndAnalyzeDNA(s, currentAIConfig);
+      setDetectedLyrics(data.lyrics);
+      setLyricalDNADecryption(data.lyricalDNA);
+      setSuccess("Lyrical DNA successfully decrypted and original lyrics retrieved!");
+    } catch (e: any) {
+      setError(e.message || "Failed to detect lyrics and analyze creative lyrical DNA.");
+    } finally {
+      setIsDetectingLyrics(false);
+    }
+  };
+
   const renderInputSelector = (
     label: string,
     song: SongInput | null,
@@ -1357,56 +1440,93 @@ export default function App() {
                   />
                 </div>
                 <div className="space-y-4">
-                  <div className="flex items-center justify-between mb-2">
-                    <label htmlFor="lyricist-personality" className="text-xs font-bold text-zinc-500 uppercase tracking-widest flex items-center gap-2">
-                      <LayoutDashboard className="w-4 h-4" /> Lyricist Style Engine
+                  <div className="flex items-center justify-between gap-4 mb-2">
+                    <label htmlFor="lyricist-personality" className="text-[10px] font-black text-zinc-500 uppercase tracking-[0.2em] flex items-center gap-2">
+                      <LayoutDashboard className="w-4 h-4 text-indigo-400" /> Lyricist Style Engine
                     </label>
-                  </div>
-                  
-                  {/* Layered Preset Selectors */}
-                  <div className="space-y-4 mb-6">
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                      <div className="space-y-1.5">
-                        <label className="text-[9px] font-black text-zinc-600 uppercase tracking-widest ml-1">Lane (Identity)</label>
-                        <select 
-                          value={selectedLaneId}
-                          onChange={(e) => {
-                            setSelectedLaneId(e.target.value);
-                            setIsUsingLayers(true);
-                          }}
-                          className="w-full bg-zinc-950 text-white border border-zinc-800 rounded-xl px-3 py-2 text-[10px] focus:outline-none focus:border-indigo-500 font-bold uppercase tracking-tight"
-                        >
-                          {STYLE_LANES.map(lane => <option key={lane.id} value={lane.id}>{lane.name}</option>)}
-                        </select>
-                      </div>
-                      <div className="space-y-1.5">
-                        <label className="text-[9px] font-black text-zinc-600 uppercase tracking-widest ml-1">Craft (Technique)</label>
-                        <select 
-                          value={selectedCraftId}
-                          onChange={(e) => {
-                            setSelectedCraftId(e.target.value);
-                            setIsUsingLayers(true);
-                          }}
-                          className="w-full bg-zinc-950 text-white border border-zinc-800 rounded-xl px-3 py-2 text-[10px] focus:outline-none focus:border-indigo-500 font-bold uppercase tracking-tight"
-                        >
-                          {CRAFT_LAYERS.map(craft => <option key={craft.id} value={craft.id}>{craft.name}</option>)}
-                        </select>
-                      </div>
-                      <div className="space-y-1.5">
-                        <label className="text-[9px] font-black text-zinc-600 uppercase tracking-widest ml-1">Heat (Intensity)</label>
-                        <select 
-                          value={selectedHeatId}
-                          onChange={(e) => {
-                            setSelectedHeatId(e.target.value);
-                            setIsUsingLayers(true);
-                          }}
-                          className="w-full bg-zinc-950 text-white border border-zinc-800 rounded-xl px-3 py-2 text-[10px] focus:outline-none focus:border-indigo-500 font-bold uppercase tracking-tight"
-                        >
-                          {HEAT_MODIFIERS.map(heat => <option key={heat.id} value={heat.id}>{heat.name}</option>)}
-                        </select>
-                      </div>
+
+                    {/* Mode switcher for blending */}
+                    <div className="flex bg-zinc-950 p-1 rounded-lg gap-1 border border-zinc-800/80">
+                      <button
+                        type="button"
+                        onClick={() => { setIsUsingJoystick(false); setIsUsingLayers(true); }}
+                        className={`px-2.5 py-1 rounded text-[8px] font-black uppercase tracking-wider transition-all ${!isUsingJoystick ? 'bg-zinc-800 text-white shadow-sm' : 'text-zinc-600 hover:text-zinc-400'}`}
+                        id="tab-discrete-layers"
+                      >
+                        Discrete
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => { setIsUsingJoystick(true); setIsUsingLayers(false); }}
+                        className={`px-2.5 py-1 rounded text-[8px] font-black uppercase tracking-wider transition-all ${isUsingJoystick ? 'bg-indigo-600/15 text-indigo-400 shadow-sm' : 'text-zinc-600 hover:text-zinc-400'}`}
+                        id="tab-joystick-layers"
+                      >
+                        Joystick
+                      </button>
                     </div>
                   </div>
+                  
+                  {/* Layered Preset Selectors or Joystick Control */}
+                  {!isUsingJoystick ? (
+                    <div className="space-y-4 mb-6">
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                        <div className="space-y-1.5">
+                          <label className="text-[9px] font-black text-zinc-600 uppercase tracking-widest ml-1">Lane (Identity)</label>
+                          <select 
+                            value={selectedLaneId}
+                            onChange={(e) => {
+                              setSelectedLaneId(e.target.value);
+                              setIsUsingLayers(true);
+                            }}
+                            className="w-full bg-zinc-950 text-white border border-zinc-800 rounded-xl px-3 py-2 text-[10px] focus:outline-none focus:border-indigo-500 font-bold uppercase tracking-tight"
+                          >
+                            {STYLE_LANES.map(lane => <option key={lane.id} value={lane.id}>{lane.name}</option>)}
+                          </select>
+                        </div>
+                        <div className="space-y-1.5">
+                          <label className="text-[9px] font-black text-zinc-600 uppercase tracking-widest ml-1">Craft (Technique)</label>
+                          <select 
+                            value={selectedCraftId}
+                            onChange={(e) => {
+                              setSelectedCraftId(e.target.value);
+                              setIsUsingLayers(true);
+                            }}
+                            className="w-full bg-zinc-950 text-white border border-zinc-800 rounded-xl px-3 py-2 text-[10px] focus:outline-none focus:border-indigo-500 font-bold uppercase tracking-tight"
+                          >
+                            {CRAFT_LAYERS.map(craft => <option key={craft.id} value={craft.id}>{craft.name}</option>)}
+                          </select>
+                        </div>
+                        <div className="space-y-1.5">
+                          <label className="text-[9px] font-black text-zinc-600 uppercase tracking-widest ml-1">Heat (Intensity)</label>
+                          <select 
+                            value={selectedHeatId}
+                            onChange={(e) => {
+                              setSelectedHeatId(e.target.value);
+                              setIsUsingLayers(true);
+                            }}
+                            className="w-full bg-zinc-950 text-white border border-zinc-800 rounded-xl px-3 py-2 text-[10px] focus:outline-none focus:border-indigo-500 font-bold uppercase tracking-tight"
+                          >
+                            {HEAT_MODIFIERS.map(heat => <option key={heat.id} value={heat.id}>{heat.name}</option>)}
+                          </select>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="mb-6">
+                      <StyleJoystick
+                        onStyleBlend={(desc, rules) => {
+                          setJoystickBlendDescription(desc);
+                          setLyricistPersonality(rules);
+                          setActiveProfileId('');
+                        }}
+                      />
+                      {joystickBlendDescription && (
+                        <div className="mt-2 px-3 py-1.5 bg-indigo-500/5 border border-indigo-500/10 rounded-lg text-[8.5px] font-mono text-indigo-400 uppercase tracking-wider text-center">
+                          {joystickBlendDescription}
+                        </div>
+                      )}
+                    </div>
+                  )}
 
                   {/* Persona Profile Selection (User Saved Profiles) */}
                   <div className="flex flex-wrap gap-2 mb-4">
@@ -1480,18 +1600,33 @@ export default function App() {
                       </div>
                       
                       {extractedProfile && (
-                        <button
-                          onClick={handleAbstractDNA}
-                          disabled={isAbstracting}
-                          className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-zinc-900 border border-zinc-800 text-[9px] font-black text-indigo-400 hover:text-white hover:border-indigo-500/50 transition-all uppercase tracking-widest disabled:opacity-50 group"
-                        >
-                          {isAbstracting ? (
-                            <Loader2 className="w-3 h-3 animate-spin" />
-                          ) : (
-                            <GitCompare className="w-3 h-3 group-hover:rotate-180 transition-transform duration-500" />
-                          )}
-                          Abstraction Pass
-                        </button>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={handleDetectLyricalDNA}
+                            disabled={isDetectingLyrics}
+                            className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-indigo-600/10 border border-indigo-500/20 text-[9px] font-black text-indigo-400 hover:bg-indigo-600 hover:text-white transition-all uppercase tracking-widest disabled:opacity-50"
+                          >
+                            {isDetectingLyrics ? (
+                              <Loader2 className="w-3 h-3 animate-spin" />
+                            ) : (
+                              <Sparkles className="w-3 h-3 text-indigo-400" />
+                            )}
+                            Decrypt Lyrics DNA
+                          </button>
+
+                          <button
+                            onClick={handleAbstractDNA}
+                            disabled={isAbstracting}
+                            className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-zinc-900 border border-zinc-800 text-[9px] font-black text-indigo-400 hover:text-white hover:border-indigo-500/50 transition-all uppercase tracking-widest disabled:opacity-50 group"
+                          >
+                            {isAbstracting ? (
+                              <Loader2 className="w-3 h-3 animate-spin" />
+                            ) : (
+                              <GitCompare className="w-3 h-3 group-hover:rotate-180 transition-transform duration-500" />
+                            )}
+                            Abstraction Pass
+                          </button>
+                        </div>
                       )}
                     </div>
 
@@ -1601,14 +1736,34 @@ export default function App() {
                           </div>
 
                           <div className="space-y-2">
-                            <label className="block text-[9px] font-black text-zinc-600 uppercase tracking-widest pl-1">Lyrical DNA / Themes</label>
-                            <textarea 
-                              value={extractedProfile.lyricalTheme || ''} 
-                              onChange={(e) => updateProfileField('lyricalTheme', e.target.value)} 
-                              placeholder="Thematic analysis..." 
-                              className="w-full bg-zinc-950/30 border border-zinc-800/80 rounded-xl px-4 py-2 text-sm text-zinc-300 focus:outline-none focus:border-indigo-500 transition-colors min-h-[80px]"
-                            />
-                          </div>
+                             <div className="flex items-center justify-between pl-1">
+                               <label className="block text-[9px] font-black text-zinc-600 uppercase tracking-widest">Lyrical DNA / Themes</label>
+                               <button
+                                 type="button"
+                                 onClick={handleDetectLyricalDNA}
+                                 disabled={isDetectingLyrics}
+                                 className="flex items-center gap-1 text-[8px] font-black text-indigo-400 hover:text-indigo-300 uppercase tracking-wider bg-indigo-500/10 border border-indigo-500/20 px-2 py-0.5 rounded transition-colors disabled:opacity-50"
+                               >
+                                 {isDetectingLyrics ? (
+                                   <>
+                                     <Loader2 className="w-2.5 h-2.5 animate-spin" />
+                                     Decrypting...
+                                   </>
+                                 ) : (
+                                   <>
+                                     <Sparkles className="w-2.5 h-2.5" />
+                                     Decrypt Lyrics DNA
+                                   </>
+                                 )}
+                               </button>
+                             </div>
+                             <textarea 
+                               value={extractedProfile.lyricalTheme || ''} 
+                               onChange={(e) => updateProfileField('lyricalTheme', e.target.value)} 
+                               placeholder="Thematic analysis..." 
+                               className="w-full bg-zinc-950/30 border border-zinc-800/80 rounded-xl px-4 py-2 text-sm text-zinc-300 focus:outline-none focus:border-indigo-500 transition-colors min-h-[80px]"
+                             />
+                           </div>
                         </>
                       ) : (
                         <div className="p-6 border border-dashed border-zinc-800 rounded-2xl text-center">
@@ -2040,6 +2195,85 @@ export default function App() {
                         </div>
                       )}
                       
+                      {/* Lyrical DNA / Lyrics Block */}
+                      {(isDetectingLyrics || detectedLyrics || lyricalDNADecryption) && (
+                        <motion.div
+                          initial={{ opacity: 0, y: 30 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          className="bg-zinc-900/30 border border-white/[0.03] rounded-[48px] p-10 glass-card space-y-10"
+                        >
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-4">
+                              <div className="w-12 h-12 rounded-2xl bg-indigo-500/5 flex items-center justify-center text-indigo-400 border border-indigo-500/10">
+                                <FileText className="w-6 h-6" />
+                              </div>
+                              <div>
+                                <h3 className="text-[10px] font-black text-white uppercase tracking-[0.3em]">Decrypted Lyrical DNA & Lyrics</h3>
+                                <p className="text-[9px] text-zinc-500 uppercase tracking-widest mt-1">Authentic Lyrics Extraction + Technical Lyricist Breakdown</p>
+                              </div>
+                            </div>
+                            
+                            <div className="flex gap-2">
+                              {detectedLyrics && (
+                                <button
+                                  onClick={() => handleCopy(detectedLyrics, 'original-lyrics')}
+                                  className="px-4 py-2 bg-zinc-950 border border-zinc-900 rounded-xl text-zinc-500 hover:text-white transition-all text-[10px] font-bold uppercase tracking-wider flex items-center gap-2"
+                                >
+                                  {copiedId === 'original-lyrics' ? <Check className="w-3.5 h-3.5 text-green-400" /> : <Copy className="w-3.5 h-3.5" />}
+                                  Copy Lyrics
+                                </button>
+                              )}
+                              
+                              {lyricalDNADecryption && (
+                                <button
+                                  onClick={() => handleCopy(lyricalDNADecryption, 'lyrical-dna')}
+                                  className="px-4 py-2 bg-zinc-950 border border-zinc-900 rounded-xl text-zinc-500 hover:text-white transition-all text-[10px] font-bold uppercase tracking-wider flex items-center gap-2"
+                                >
+                                  {copiedId === 'lyrical-dna' ? <Check className="w-3.5 h-3.5 text-green-400" /> : <Copy className="w-3.5 h-3.5" />}
+                                  Copy DNA Report
+                                </button>
+                              )}
+                            </div>
+                          </div>
+
+                          {isDetectingLyrics ? (
+                            <div className="flex flex-col items-center justify-center py-20 text-center space-y-4">
+                              <Loader2 className="w-10 h-10 animate-spin text-indigo-500" />
+                              <div className="space-y-1">
+                                <p className="text-sm font-bold text-zinc-300 uppercase tracking-widest animate-pulse">Decrypting Lyrical DNA...</p>
+                                <p className="text-xs text-zinc-500 max-w-sm mx-auto leading-relaxed">Scouring standard references via Google Search to identify authentic lyrics, analyze metrics, and decode rhyme patterns.</p>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="grid grid-cols-1 lg:grid-cols-2 gap-10">
+                              {/* Detected Lyrics Column */}
+                              <div className="space-y-4 border-r border-zinc-800/30 pr-0 lg:pr-10">
+                                <div className="flex items-center gap-2">
+                                  <Music className="w-4 h-4 text-indigo-400" />
+                                  <h4 className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Identified Lyrical Transcript</h4>
+                                </div>
+                                <div className="p-8 bg-zinc-950/40 border border-white/[0.02] rounded-[32px] max-h-[500px] overflow-y-auto custom-scrollbar">
+                                  <p className="text-sm text-zinc-400 leading-relaxed font-serif whitespace-pre-line select-text">
+                                    {detectedLyrics || "No lyrics detected."}
+                                  </p>
+                                </div>
+                              </div>
+
+                              {/* Lyrical DNA Column */}
+                              <div className="space-y-4">
+                                <div className="flex items-center gap-2">
+                                  <Sparkles className="w-4 h-4 text-purple-400" />
+                                  <h4 className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Creative DNA Decryption</h4>
+                                </div>
+                                <div className="p-8 bg-zinc-950/40 border border-white/[0.02] rounded-[32px] max-h-[500px] overflow-y-auto custom-scrollbar prose prose-invert prose-indigo max-w-none prose-sm leading-relaxed text-zinc-300">
+                                  <ReactMarkdown>{lyricalDNADecryption || "Waiting for decryption..."}</ReactMarkdown>
+                                </div>
+                              </div>
+                            </div>
+                          )}
+                        </motion.div>
+                      )}
+                      
                       {/* AI Generator Suite */}
                       {(extractedProfile?.musicalPrompt || extractedProfile?.stylePrompt) && (
                         <motion.div
@@ -2142,6 +2376,11 @@ export default function App() {
                           </div>
                         </div>
 
+                        {/* Real-time Rhythmic Syllable Matrix Grid */}
+                        <div className="px-6">
+                          <MetricGrid lyricsText={generatedLyrics.map(s => `[${s.label}]\n${s.text}`).join('\n\n')} />
+                        </div>
+
                         <div className="grid grid-cols-1 gap-12 px-6">
                           {generatedLyrics.map((segment, index) => (
                             <div key={index} className="bg-zinc-950/40 border border-white/[0.02] rounded-[48px] overflow-hidden group hover:border-indigo-500/20 transition-all duration-500 glass-card p-12">
@@ -2231,6 +2470,7 @@ export default function App() {
                                     onChange={(e) => setSegmentEditValue(e.target.value)}
                                     className="w-full bg-zinc-950 border border-zinc-800 rounded-[32px] p-8 text-xl font-bold text-white focus:outline-none focus:ring-4 focus:ring-indigo-500/10 min-h-[220px]"
                                   />
+                                  <MetricGrid lyricsText={segmentEditValue} />
                                   <div className="flex justify-end gap-3">
                                      <button onClick={() => setEditingSegmentIndex(null)} className="px-6 py-3 text-[10px] font-black uppercase tracking-widest text-zinc-600 hover:text-white">Cancel</button>
                                      <button 

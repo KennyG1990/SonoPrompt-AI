@@ -10,19 +10,110 @@ function getAI(): GoogleGenAI {
     if (!apiKey || apiKey === "undefined" || apiKey === "") {
       console.warn("GEMINI_API_KEY is missing from environment. This might cause failures if not handled by AI Studio platform.");
     }
-    aiInstance = new GoogleGenAI({ apiKey: apiKey as string });
+    aiInstance = new GoogleGenAI({
+      apiKey: apiKey as string,
+      httpOptions: {
+        headers: {
+          'User-Agent': 'aistudio-build',
+        }
+      }
+    });
   }
   return aiInstance;
+}
+
+function getModelFallbacks(requestedModel: string): string[] {
+  const cleanModel = (requestedModel || "").toLowerCase().trim();
+  
+  if (cleanModel.includes('image')) {
+    return [
+      'gemini-2.5-flash-image',
+      'gemini-3.1-flash-image-preview',
+      'gemini-3-pro-image'
+    ];
+  }
+  
+  // Standard text models fallback list starting with the requested one if valid
+  const standardList = [
+    'gemini-3.5-flash',
+    'gemini-flash-latest',
+    'gemini-3.1-flash-lite',
+    'gemini-3-flash-preview'
+  ];
+  
+  const index = standardList.indexOf(cleanModel);
+  if (index !== -1) {
+    const filtered = standardList.filter(m => m !== cleanModel);
+    return [requestedModel, ...filtered];
+  }
+  
+  return [requestedModel, ...standardList];
 }
 
 // Proxy object to maintain compatibility with existing call sites
 const ai = {
   models: {
     generateContent: async (params: any) => {
-      return getAI().models.generateContent(params);
+      const requestedModel = params.model;
+      const fallbacks = getModelFallbacks(requestedModel);
+      
+      let lastError: any;
+      for (const model of fallbacks) {
+        try {
+          const attemptParams = { ...params, model };
+          return await getAI().models.generateContent(attemptParams);
+        } catch (error: any) {
+          lastError = error;
+          const errorMessage = error?.message?.toLowerCase() || "";
+          const status = error?.status || error?.code || error?.error?.code || 0;
+          
+          const isRateLimit = status === 429 || errorMessage.includes("429") || errorMessage.includes("too many requests");
+          const isServiceUnavailable = status === 503 || status === 504 || 
+                                       errorMessage.includes("503") || errorMessage.includes("504") ||
+                                       errorMessage.includes("service unavailable") || 
+                                       errorMessage.includes("high demand") || 
+                                       errorMessage.includes("unavailable") ||
+                                       errorMessage.includes("overloaded");
+          
+          if (isRateLimit || isServiceUnavailable) {
+            console.warn(`Model "${model}" experienced transient error (${status}). Trying next fallback...`, error.message);
+            continue;
+          }
+          throw error;
+        }
+      }
+      throw lastError;
     },
     generateContentStream: async (params: any) => {
-      return getAI().models.generateContentStream(params);
+      const requestedModel = params.model;
+      const fallbacks = getModelFallbacks(requestedModel);
+      
+      let lastError: any;
+      for (const model of fallbacks) {
+        try {
+          const attemptParams = { ...params, model };
+          return await getAI().models.generateContentStream(attemptParams);
+        } catch (error: any) {
+          lastError = error;
+          const errorMessage = error?.message?.toLowerCase() || "";
+          const status = error?.status || error?.code || error?.error?.code || 0;
+          
+          const isRateLimit = status === 429 || errorMessage.includes("429") || errorMessage.includes("too many requests");
+          const isServiceUnavailable = status === 503 || status === 504 || 
+                                       errorMessage.includes("503") || errorMessage.includes("504") ||
+                                       errorMessage.includes("service unavailable") || 
+                                       errorMessage.includes("high demand") || 
+                                       errorMessage.includes("unavailable") ||
+                                       errorMessage.includes("overloaded");
+          
+          if (isRateLimit || isServiceUnavailable) {
+            console.warn(`Model "${model}" experienced transient error (${status}) during stream. Trying next fallback...`, error.message);
+            continue;
+          }
+          throw error;
+        }
+      }
+      throw lastError;
     }
   },
   chats: {
@@ -418,7 +509,7 @@ export async function analyzeAudioFile(file: File, config: AIConfig = { provider
 
   try {
     const response = await withRetry(() => ai.models.generateContent({
-      model: "gemini-3-flash-preview",
+      model: "gemini-3.5-flash",
       contents: {
         parts: [
           {
@@ -516,7 +607,7 @@ Finally, provide a highly optimized **"Delta" Music Generator Prompt** (for tool
   parts.push({ text: promptText });
 
   const response = await withRetry(() => ai.models.generateContent({
-    model: "gemini-3-flash-preview",
+    model: "gemini-3.5-flash",
     contents: { parts },
     config: {
       tools: [
@@ -526,6 +617,91 @@ Finally, provide a highly optimized **"Delta" Music Generator Prompt** (for tool
   }));
 
   return response.text || "No comparison generated.";
+}
+
+export async function detectLyricsAndAnalyzeDNA(
+  song: SongInput, 
+  config: AIConfig = { provider: 'gemini' }
+): Promise<{ lyrics: string; lyricalDNA: string }> {
+  const parts: any[] = [];
+  let songIdentifier = "";
+  
+  if (song.type === 'link') {
+    const meta = await resolveSongMetadata(song.link);
+    songIdentifier = `the song at this link: "${song.link}" ${meta}`;
+  } else {
+    songIdentifier = `the uploaded audio file named "${song.file.name}"`;
+    const base64Data = await getFileBase64(song.file);
+    parts.push({
+      inlineData: {
+        mimeType: song.file.type,
+        data: base64Data,
+      },
+    });
+  }
+
+  const promptText = `Analyze the lyrics and creative DNA of ${songIdentifier}.
+
+CRITICAL INSTRUCTIONS:
+1. SEARCH & DETECT: Use your Google Search tool to find and retrieve the exact, authentic, original lyrics of this song. Double check names, verses, choruses.
+   - If an uploaded file is provided, try to identify the song from its filename or from listening to the audio if possible. If you can figure out the song, fetch its official lyrics. Otherwise, transcribe the lyrics from the audio file.
+2. LYRICAL DNA DECRYPTION: Generate an expert-level, thorough creative DNA analysis of those lyrics. Detail:
+   - **Rhyme Scheme & Metrics**: Describe the rhyme structure (e.g., slant rhymes, multi-syllabic rhymes) and lyrical meter.
+   - **Thematic Core & Motifs**: Examine the deeper themes, physical motifs, and sensory signals running through the lyrics.
+   - **Emotional Undercurrents**: Break down the emotional arc, vocal delivery mood, and relationship dynamic.
+   - **Compositional Highlights & Genius**: Explain what makes the lyrical structure unique, clever, or impactful (e.g. clever wordplay, double entendres).
+3. JSON FORMAT REQUIREMENT:
+   You MUST return a JSON object with exactly two top-level string fields:
+   - "lyrics": The detected, formatted lyrics of the song with paragraph breaks and section labels (e.g., [Verse 1], [Chorus]).
+   - "lyricalDNA": A markdown string containing the detailed "Creative DNA" analysis of the detected lyrics.
+
+Ensure the returned format is raw JSON only. Do not wrap in markdown or prefix/suffix with any conversational filler.`;
+
+  parts.push({ text: promptText });
+
+  if (config.provider === 'openrouter') {
+    const responseText = await callOpenRouter(promptText, config, 'analysis');
+    try {
+      const jsonStr = extractJson(responseText || "{}");
+      const parsed = safeJsonParse(jsonStr);
+      return {
+        lyrics: parsed.lyrics || "Lyrics could not be retrieved.",
+        lyricalDNA: parsed.lyricalDNA || "Lyrical DNA analysis failed."
+      };
+    } catch (e) {
+      console.error("Failed to parse OpenRouter lyrical DNA response", e);
+      return {
+        lyrics: "Could not retrieve lyrics.",
+        lyricalDNA: responseText || "Analysis failed."
+      };
+    }
+  }
+
+  const response = await withRetry(() => ai.models.generateContent({
+    model: "gemini-3.5-flash",
+    contents: { parts },
+    config: {
+      tools: [
+        { googleSearch: {} },
+      ],
+    },
+  }));
+
+  const text = response.text || "{}";
+  try {
+    const jsonStr = extractJson(text);
+    const parsed = safeJsonParse(jsonStr);
+    return {
+      lyrics: parsed.lyrics || "Lyrics could not be retrieved.",
+      lyricalDNA: parsed.lyricalDNA || "Lyrical DNA analysis failed."
+    };
+  } catch (e) {
+    console.error("Failed to parse lyrical DNA response", e);
+    return {
+      lyrics: "Could not retrieve lyrics natively.",
+      lyricalDNA: text || "Analysis failed."
+    };
+  }
 }
 
 export async function analyzeSongLink(linkOrName: string, config: AIConfig = { provider: 'gemini' }): Promise<AnalysisResult> {
@@ -576,7 +752,7 @@ You MUST use your internal training data and your Google Search tool to identify
 
   try {
     const response = await withRetry(() => ai.models.generateContent({
-      model: "gemini-3-flash-preview",
+      model: "gemini-3.5-flash",
       contents: contentsData,
       config: {
         tools: [{ googleSearch: {} }],
@@ -667,7 +843,7 @@ Return ONLY the JSON object with the same keys as the input.`;
 
   try {
     const response = await withRetry(() => ai.models.generateContent({
-      model: "gemini-3-flash-preview",
+      model: "gemini-3.5-flash",
       contents: { parts: [{ text: prompt }] },
     }));
 
@@ -816,7 +992,7 @@ CRITICAL JSON HYGIENE: The output MUST be a single, valid JSON object.
   ];
 
   const response = await withRetry(() => ai.models.generateContent({
-    model: "gemini-3-flash-preview",
+    model: "gemini-3.5-flash",
     contents: {
       parts: [
         { text: systemText },
@@ -978,7 +1154,7 @@ Return the result STRICTLY as a JSON object with the keys: "title", "prompt", "s
 
   try {
     const response = await withRetry(() => ai.models.generateContent({
-      model: "gemini-3-flash-preview",
+      model: "gemini-3.5-flash",
       contents: {
         parts: [
           { text: systemText },
@@ -1112,7 +1288,7 @@ Do not include the segment label. Do not use markdown blocks for the JSON. Retur
   ];
 
   const response = await withRetry(() => ai.models.generateContent({
-    model: "gemini-3-flash-preview",
+    model: "gemini-3.5-flash",
     contents: { parts },
     config: {
       tools: [{ googleSearch: {} }],
@@ -1170,7 +1346,7 @@ Output ONLY the new sung lyrics. Do NOT include any meta-descriptions, stage dir
   ];
 
   const response = await withRetry(() => ai.models.generateContent({
-    model: "gemini-3-flash-preview",
+    model: "gemini-3.5-flash",
     contents: { parts: [{ text: promptText }] },
     config: {
       safetySettings
@@ -1228,7 +1404,7 @@ Return ONLY the suggested title, without quotes or extra text. (IMPORTANT: The t
 
   try {
     const response = await withRetry(() => ai.models.generateContent({
-      model: "gemini-3-flash-preview",
+      model: "gemini-3.5-flash",
       contents: { parts },
       config: {
         tools: [{ googleSearch: {} }],
@@ -1266,7 +1442,7 @@ ${text}
   }
 
   const response = await withRetry(() => ai.models.generateContent({
-    model: "gemini-3-flash-preview",
+    model: "gemini-3.5-flash",
     contents: { parts: [{ text: prompt }] },
   }));
 
@@ -1289,7 +1465,7 @@ FEEL: Dangerous but seductive, secretive, expensive, emotionally heavy.` : "";
 
   try {
     const response = await withRetry(() => ai.models.generateContent({
-      model: 'gemini-3.1-flash-image-preview',
+      model: 'gemini-2.5-flash-image',
       contents: {
         parts: [
           {
